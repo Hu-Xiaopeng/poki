@@ -1814,7 +1814,7 @@ struct ComposerInputView: View {
             withAnimation(reduceMotion ? nil : .snappy(duration: 0.26)) { adding.toggle() }
         } label: {
             Image(systemName: "plus")
-                .font(.system(size: compactButtonDiameter / 2, weight: .medium)).dynamicTypeSize(...DynamicTypeSize.xxxLarge).foregroundStyle(Color(.label))
+                .font(.system(size: shortcutGlyphSide, weight: .medium)).dynamicTypeSize(...DynamicTypeSize.xxxLarge).foregroundStyle(Color(.label))
                 .rotationEffect(.degrees(adding ? 45 : 0))
                 .frame(width: compactButtonDiameter, height: compactButtonDiameter)
                 .frame(width: buttonHitSide, height: buttonHitSide)
