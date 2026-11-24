@@ -135,16 +135,10 @@ struct ComposerTaskSettings: View {
             Button(action: openModelSetup) {
                 Label("Add Model", systemImage: "plus")
                     .labelStyle(.titleAndIcon)
-                    .foregroundStyle(.primary)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 12)
-                    .frame(maxWidth: .infinity, minHeight: 50, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(.rect)
             }
             .buttonStyle(.plain)
-            .glassSurface(in: Capsule(), interactive: true, fallback: .bar)
-            .listRowInsets(EdgeInsets())
-            .listRowBackground(Color.clear)
             .accessibilityIdentifier("composer.model.setup")
         } footer: {
             if providers.isEmpty, previewSelection == nil {
