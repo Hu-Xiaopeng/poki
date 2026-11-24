@@ -189,13 +189,12 @@ struct ComposerTaskSettings: View {
         }
     }
 
-    @ViewBuilder private func selectionMark(_ selected: Bool) -> some View {
-        if selected {
-            Image(systemName: "checkmark")
-                .font(.body.weight(.semibold))
-                .foregroundStyle(Tint.blueText)
-                .accessibilityHidden(true)
-        }
+    private func selectionMark(_ selected: Bool) -> some View {
+        Image(systemName: "checkmark")
+            .font(.body.weight(.semibold))
+            .foregroundStyle(Tint.blueText)
+            .opacity(selected ? 1 : 0)
+            .accessibilityHidden(true)
     }
 }
 
