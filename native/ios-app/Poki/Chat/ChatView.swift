@@ -1513,7 +1513,21 @@ struct ComposerInputView: View {
                                 if input.isEmpty {
                                     Text(dictation.on ? "Listening…" : attachments.isEmpty ? "Message Poki" : "Add a message")
                                         .foregroundStyle(Tint.homePlaceholder).lineLimit(1)
-                                        .padding(.top, 6).allowsHitTesting(false).accessibilityHidden(true)
+                                        .padding(.top, 6)
+                                        .overlay(alignment: .leading) {
+                                            if isSettingsPreview {
+                                                Capsule()
+                                                    .fill(Color.accentColor)
+                                                    .frame(width: 2)
+                                                    .padding(.top, 6)
+                                                    .phaseAnimator([true, false]) { caret, visible in
+                                                        caret.opacity(visible || reduceMotion ? 1 : 0)
+                                                    } animation: { _ in
+                                                        reduceMotion ? nil : .easeInOut(duration: 0.12).delay(0.42)
+                                                    }
+                                            }
+                                        }
+                                        .allowsHitTesting(false).accessibilityHidden(true)
                                 }
                             }
                             .allowsHitTesting(!isSettingsPreview)
