@@ -269,25 +269,20 @@ private struct ComposerConfirmationButtonOutline: Shape {
             CGPoint(x: rect.midX + (x - 12) * unit, y: rect.midY + (y - 12) * unit)
         }
 
-        let face = CGRect(origin: point(4.6, 2), size: CGSize(width: 14.8 * unit, height: 8.4 * unit))
+        let face = CGRect(origin: point(4.2, 2.5), size: CGSize(width: 15.6 * unit, height: 9.2 * unit))
         var outline = Path(ellipseIn: face)
-        outline.move(to: point(4.6, 6.2))
-        outline.addLine(to: point(4.6, 10.4))
-        outline.addCurve(to: point(12, 14.4), control1: point(4.6, 12.6), control2: point(7.9, 14.4))
-        outline.addCurve(to: point(19.4, 10.4), control1: point(16.1, 14.4), control2: point(19.4, 12.6))
-        outline.addLine(to: point(19.4, 6.2))
+        outline.move(to: point(4.2, 7.1))
+        outline.addCurve(to: point(3, 14), control1: point(3.8, 9.5), control2: point(3, 12.1))
+        outline.addCurve(to: point(12, 18), control1: point(3, 16.5), control2: point(7.4, 18))
+        outline.addCurve(to: point(21, 14), control1: point(16.6, 18), control2: point(21, 16.5))
+        outline.addCurve(to: point(19.8, 7.1), control1: point(21, 12.1), control2: point(20.2, 9.5))
 
-        outline.move(to: point(4.6, 10.8))
-        outline.addQuadCurve(to: point(1.5, 14), control: point(1.5, 12))
-        outline.addCurve(to: point(12, 18.3), control1: point(1.5, 16.4), control2: point(6.2, 18.3))
-        outline.addCurve(to: point(22.5, 14), control1: point(17.8, 18.3), control2: point(22.5, 16.4))
-        outline.addQuadCurve(to: point(19.4, 10.8), control: point(22.5, 12))
-
-        outline.move(to: point(1.5, 14))
-        outline.addLine(to: point(1.5, 17.2))
-        outline.addCurve(to: point(12, 22), control1: point(1.5, 19.9), control2: point(6.2, 22))
-        outline.addCurve(to: point(22.5, 17.2), control1: point(17.8, 22), control2: point(22.5, 19.9))
-        outline.addLine(to: point(22.5, 14))
+        // Only the exposed part of the base is visible around the cap.
+        outline.move(to: point(3.4, 11.7))
+        outline.addQuadCurve(to: point(1.2, 15.7), control: point(1.2, 13.3))
+        outline.addCurve(to: point(12, 21.5), control1: point(1.2, 19), control2: point(6.3, 21.5))
+        outline.addCurve(to: point(22.8, 15.7), control1: point(17.7, 21.5), control2: point(22.8, 19))
+        outline.addQuadCurve(to: point(20.6, 11.7), control: point(22.8, 13.3))
         return outline
     }
 }
