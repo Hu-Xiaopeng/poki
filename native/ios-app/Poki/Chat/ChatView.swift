@@ -1513,9 +1513,7 @@ struct ComposerInputView: View {
                         }
                         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                         taskShortcut(.approval, value: model.approvalMode.title) {
-                            Image(systemName: model.approvalMode.composerSymbol)
-                                .font(.system(size: shortcutGlyphSide, weight: .medium))
-                                .foregroundStyle(model.approvalMode.composerTint)
+                            model.approvalMode.composerIcon(size: shortcutGlyphSide)
                         }
                         taskShortcut(.model) {
                             ComposerBrainOutline()

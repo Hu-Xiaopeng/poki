@@ -33,6 +33,7 @@ struct ComposerTaskSettings: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @ScaledMetric(relativeTo: .body) private var approvalIconWidth = 24.0
+    @ScaledMetric(relativeTo: .body) private var approvalIconSize = 17.0
     @State private var contentHeight: CGFloat?
     @State private var modelVersion = ModelKeys.saved
     let kind: Kind
@@ -79,8 +80,7 @@ struct ComposerTaskSettings: View {
                     dismiss()
                 } label: {
                     HStack(alignment: .firstTextBaseline, spacing: 12) {
-                        Image(systemName: mode.composerSymbol)
-                            .foregroundStyle(mode.composerTint)
+                        mode.composerIcon(size: approvalIconSize)
                             .frame(minWidth: approvalIconWidth)
                             .accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 4) {
@@ -200,16 +200,22 @@ struct ComposerTaskSettings: View {
 }
 
 extension ApprovalClassifier.Mode {
-    var composerSymbol: String {
+    @ViewBuilder func composerIcon(size: CGFloat) -> some View {
         switch self {
-        case .reply: "hand.raised"
-        case .confirm: "checkmark.rectangle"
-        case .off: "exclamationmark.shield"
+        case .reply:
+            Image(systemName: "hand.raised")
+                .font(.system(size: size, weight: .medium))
+                .foregroundStyle(.secondary)
+        case .confirm:
+            ComposerConfirmationButtonOutline()
+                .stroke(style: StrokeStyle(lineWidth: size / 13, lineCap: .round, lineJoin: .round))
+                .frame(width: size, height: size)
+                .foregroundStyle(.secondary)
+        case .off:
+            Image(systemName: "exclamationmark.shield")
+                .font(.system(size: size, weight: .medium))
+                .foregroundStyle(Tint.red)
         }
-    }
-
-    var composerTint: Color {
-        self == .off ? Tint.red : .secondary
     }
 
     fileprivate var composerDescription: LocalizedStringKey {
@@ -250,6 +256,31 @@ struct ComposerBrainOutline: Shape {
         outline.addQuadCurve(to: point(16.7, 8.4), control: point(19, 7.4))
         outline.move(to: point(12, 11.8))
         outline.addLine(to: point(14.5, 11.8))
+        return outline
+    }
+}
+
+
+/// A rounded keycap with a visible lower edge and a confirmation mark on its face.
+private struct ComposerConfirmationButtonOutline: Shape {
+    func path(in rect: CGRect) -> Path {
+        let unit = min(rect.width, rect.height) / 24
+        func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(x: rect.midX + (x - 12) * unit, y: rect.midY + (y - 12) * unit)
+        }
+
+        let face = CGRect(origin: point(2.5, 4.5), size: CGSize(width: 19 * unit, height: 12 * unit))
+        var outline = Path(roundedRect: face, cornerRadius: 3.8 * unit)
+        outline.move(to: point(2.5, 12.7))
+        outline.addLine(to: point(2.5, 15.5))
+        outline.addQuadCurve(to: point(6.3, 19.5), control: point(2.5, 19.5))
+        outline.addLine(to: point(17.7, 19.5))
+        outline.addQuadCurve(to: point(21.5, 15.5), control: point(21.5, 19.5))
+        outline.addLine(to: point(21.5, 12.7))
+
+        outline.move(to: point(8.8, 10.4))
+        outline.addLine(to: point(11, 12.6))
+        outline.addLine(to: point(15.3, 8.5))
         return outline
     }
 }
