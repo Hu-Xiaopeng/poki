@@ -57,6 +57,7 @@ struct ChatView: View {
 
     /// The message field has the keyboard.
     @State private var writing = false
+    @State private var composerSettingsPresented = false
     /// Plus's ways to add a photo or a file stand over the message field.
     @State private var adding = false
     @State private var scrollReplyQuestion: UUID?
@@ -171,7 +172,7 @@ struct ChatView: View {
             }
             // The home page stays in the tree while the conversation is in front, neither seen nor
             // touched, so a new conversation brings it back on the same animation.
-            HomePage(home: home, writing: writing, rise: flightRise, sessionStore: sessionStore, shortcutStore: shortcutStore,
+            HomePage(home: home, writing: writing || composerSettingsPresented, rise: flightRise, sessionStore: sessionStore, shortcutStore: shortcutStore,
                      pick: { model.prepareForTask(); chat.setDraftActivity(true); draft.wrappedValue = $0; writing = true }) {
                 if home, let update { UpdatePill(version: update, open: openUpdates) }
                 if home, let hint = homeHint {
@@ -221,7 +222,8 @@ struct ChatView: View {
                         .accessibilityIdentifier("chat.counted-scroll.reply")
                     }
                 }
-                ComposerInputView(input: draft, focused: $writing, adding: $adding, running: busy, progress: progress, restarts: restarts, conversationID: chat.sessionID,
+                ComposerInputView(input: draft, focused: $writing, adding: $adding,
+                                  settingsPresented: $composerSettingsPresented, running: busy, progress: progress, restarts: restarts, conversationID: chat.sessionID,
                                   send: { text, attachments in
                                       let reply = scrollReplyQuestion == chat.countedScrollQuestion ? scrollReplyQuestion : nil
                                       scrollReplyQuestion = nil
@@ -1349,6 +1351,7 @@ struct ComposerInputView: View {
     @Binding var focused: Bool
     /// Plus is open: its ways to add stand over the message field until one is picked or the page is tapped.
     @Binding var adding: Bool
+    @Binding var settingsPresented: Bool
     var running: Bool
     /// How far the running task is, 0 to 1, for the ring around Stop; nil when unknown.
     var progress: Double? = nil
@@ -1768,6 +1771,7 @@ struct ComposerInputView: View {
     private func taskShortcut<Icon: View>(_ kind: ComposerTaskSettings.Kind, value: String = "",
                                           @ViewBuilder icon: () -> Icon) -> some View {
         Button {
+            settingsPresented = true
             resumeEditing = focused
             taskSettings = kind
             adding = false
@@ -1788,6 +1792,8 @@ struct ComposerInputView: View {
     }
 
     private func finishTaskSettings() {
+        // Keep the home suggestions hidden until the editor has its focus back.
+        defer { settingsPresented = false }
         if showModelSetupAfterDismiss {
             showModelSetupAfterDismiss = false
             openModel()
