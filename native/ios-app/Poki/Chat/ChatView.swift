@@ -1419,6 +1419,7 @@ struct ComposerInputView: View {
         return max(44, min(buttonHitSide, available / 2))
     }
     private var shortcutGlyphSide: CGFloat { shortcutHitSide / 2 }
+    private var compactButtonDiameter: CGFloat { buttonDiameter * 0.87 }
     private var buttonHitSide: CGFloat { max(44, buttonDiameter) }
     private var controlInset: CGFloat { min(8, max(4, scaledControlInset)) }
     private var controlSpacing: CGFloat { min(12, max(6, scaledControlSpacing)) }
@@ -1798,9 +1799,9 @@ struct ComposerInputView: View {
             withAnimation(reduceMotion ? nil : .snappy(duration: 0.26)) { adding.toggle() }
         } label: {
             Image(systemName: "plus")
-                .font(.title3.weight(.medium)).dynamicTypeSize(...DynamicTypeSize.xxxLarge).foregroundStyle(Color(.label))
+                .font(.system(size: compactButtonDiameter / 2, weight: .medium)).dynamicTypeSize(...DynamicTypeSize.xxxLarge).foregroundStyle(Color(.label))
                 .rotationEffect(.degrees(adding ? 45 : 0))
-                .frame(width: buttonDiameter, height: buttonDiameter)
+                .frame(width: compactButtonDiameter, height: compactButtonDiameter)
                 .background(Color(.label).opacity(scheme == .dark ? 0.16 : 0.12), in: .circle)
                 .frame(width: buttonHitSide, height: buttonHitSide)
                 .contentShape(.interaction, Rectangle())
@@ -1901,16 +1902,18 @@ struct ComposerInputView: View {
     /// blue while it is yours to press for Poki; ink while it stops a task, with the task's progress
     /// as a ring around it.
     private var mainButton: some View {
-        Button {
+        let talking = !running && !canSend
+        let diameter = talking ? compactButtonDiameter : buttonDiameter
+        return Button {
             // On an empty field: Talk with Poki at once. Dictation has its own
             // button beside this one. Without a voice key `openVoice` has the field say so.
             if running { stop() } else if canSend { submit() } else { dictation.stop(model); openVoice() }
         } label: {
             Image(systemName: running ? "stop.fill" : canSend ? "arrow.up" : "waveform")
-                .font(.body.weight(.semibold))
+                .font(talking ? .system(size: diameter * 0.42, weight: .semibold) : .body.weight(.semibold))
                 .contentTransition(.symbolEffect(.replace))
                 .foregroundStyle(running ? Tint.onSolid : .white)
-                .frame(width: buttonDiameter, height: buttonDiameter)
+                .frame(width: diameter, height: diameter)
                 .background(running ? Tint.solid : Tint.blue, in: .circle)
                 .overlay {
                     if running {
