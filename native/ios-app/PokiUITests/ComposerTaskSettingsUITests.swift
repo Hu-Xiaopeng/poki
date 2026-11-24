@@ -18,7 +18,7 @@ final class ComposerTaskSettingsUITests: XCTestCase {
         let addModel = app.buttons["composer.model.setup"]
         let chatGPT = app.buttons["composer.model.chatgpt.gpt-6.1-terra"]
         let deepSeek = app.buttons["composer.model.deepseek.deepseek-flash"]
-        let claude = app.buttons["composer.model.anthropic.claude-sonnet-5-5"]
+        let deepSeekPro = app.buttons["composer.model.deepseek.deepseek-v4-pro"]
         XCTAssertTrue(editor.waitForExistence(timeout: 15))
         let compactOffset = plus.frame.midY - editor.frame.midY
 
@@ -54,7 +54,7 @@ final class ComposerTaskSettingsUITests: XCTestCase {
         model.tap()
         XCTAssertTrue(chatGPT.waitForExistence(timeout: 5))
         XCTAssertTrue(chatGPT.isSelected)
-        for option in [deepSeek, claude] {
+        for option in [deepSeek, deepSeekPro] {
             if !option.isHittable { app.swipeUp() }
             XCTAssertTrue(option.isHittable)
             option.tap()
@@ -70,9 +70,9 @@ final class ComposerTaskSettingsUITests: XCTestCase {
         XCTAssertTrue((editor.value as? String)?.contains(".") == true)
 
         model.tap()
-        XCTAssertTrue(claude.waitForExistence(timeout: 5))
-        if !claude.isHittable { app.swipeUp() }
-        XCTAssertTrue(claude.isSelected)
+        XCTAssertTrue(deepSeekPro.waitForExistence(timeout: 5))
+        if !deepSeekPro.isHittable { app.swipeUp() }
+        XCTAssertTrue(deepSeekPro.isSelected)
         if !addModel.isHittable { app.swipeUp() }
         addModel.tap()
         XCTAssertTrue(app.navigationBars.matching(NSPredicate(format: "identifier IN %@", ["Models", "模型"])).firstMatch.waitForExistence(timeout: 5))

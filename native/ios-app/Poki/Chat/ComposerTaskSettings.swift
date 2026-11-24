@@ -129,7 +129,6 @@ struct ComposerTaskSettings: View {
             modelGroup(AppLocalization.text(LocalizedStringResource("ChatGPT Subscription")),
                        provider: .chatgpt, choices: ModelProvider.chatgpt.models)
             modelGroup("DeepSeek API", provider: .deepseek, choices: ModelProvider.deepseek.models)
-            modelGroup("Claude API", provider: .anthropic, choices: ModelProvider.anthropic.models)
         } else {
             configuredModels(providers, storage: storage)
         }
