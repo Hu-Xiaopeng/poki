@@ -261,7 +261,7 @@ struct ComposerBrainOutline: Shape {
 }
 
 
-/// A round push button viewed from above, with a shallow side wall.
+/// A rounded push cap raised above its wider circular base.
 private struct ComposerConfirmationButtonOutline: Shape {
     func path(in rect: CGRect) -> Path {
         let unit = min(rect.width, rect.height) / 24
@@ -269,13 +269,25 @@ private struct ComposerConfirmationButtonOutline: Shape {
             CGPoint(x: rect.midX + (x - 12) * unit, y: rect.midY + (y - 12) * unit)
         }
 
-        let face = CGRect(origin: point(2.5, 4.5), size: CGSize(width: 19 * unit, height: 10 * unit))
+        let face = CGRect(origin: point(4.6, 2), size: CGSize(width: 14.8 * unit, height: 8.4 * unit))
         var outline = Path(ellipseIn: face)
-        outline.move(to: point(2.5, 9.5))
-        outline.addLine(to: point(2.5, 14))
-        outline.addCurve(to: point(12, 19), control1: point(2.5, 16.8), control2: point(6.8, 19))
-        outline.addCurve(to: point(21.5, 14), control1: point(17.2, 19), control2: point(21.5, 16.8))
-        outline.addLine(to: point(21.5, 9.5))
+        outline.move(to: point(4.6, 6.2))
+        outline.addLine(to: point(4.6, 10.4))
+        outline.addCurve(to: point(12, 14.4), control1: point(4.6, 12.6), control2: point(7.9, 14.4))
+        outline.addCurve(to: point(19.4, 10.4), control1: point(16.1, 14.4), control2: point(19.4, 12.6))
+        outline.addLine(to: point(19.4, 6.2))
+
+        outline.move(to: point(4.6, 10.8))
+        outline.addQuadCurve(to: point(1.5, 14), control: point(1.5, 12))
+        outline.addCurve(to: point(12, 18.3), control1: point(1.5, 16.4), control2: point(6.2, 18.3))
+        outline.addCurve(to: point(22.5, 14), control1: point(17.8, 18.3), control2: point(22.5, 16.4))
+        outline.addQuadCurve(to: point(19.4, 10.8), control: point(22.5, 12))
+
+        outline.move(to: point(1.5, 14))
+        outline.addLine(to: point(1.5, 17.2))
+        outline.addCurve(to: point(12, 22), control1: point(1.5, 19.9), control2: point(6.2, 22))
+        outline.addCurve(to: point(22.5, 17.2), control1: point(17.8, 22), control2: point(22.5, 19.9))
+        outline.addLine(to: point(22.5, 14))
         return outline
     }
 }
