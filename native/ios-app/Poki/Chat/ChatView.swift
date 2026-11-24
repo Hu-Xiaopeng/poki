@@ -227,7 +227,7 @@ struct ChatView: View {
                                       scrollReplyQuestion = nil
                                       chat.send(text, attachments: attachments, replyingTo: reply)
                                   }, stop: chat.stop, openVoice: openVoice, openChatGPTSignIn: openChatGPTSignIn, openVoiceKey: openVoiceKey,
-                                  noticeHeight: max(120, pageHeight * 0.6))
+                                  openModel: openModel, noticeHeight: max(120, pageHeight * 0.6))
                     .logStartupAppearance(.composer)
             }
             .padding(.horizontal, 18).padding(.top, 6).padding(.bottom, 10)
@@ -1366,6 +1366,11 @@ struct ComposerInputView: View {
     var openChatGPTSignIn: () -> Void = {}
     /// Settings, where the OpenAI key that Talk with Poki needs is added (or Live Voice turned on).
     var openVoiceKey: () -> Void = {}
+    var openModel: () -> Void = {}
+    @State private var taskSettings: ComposerTaskSettings.Kind?
+    @State private var modelPreviewSelection = ComposerTaskSettings.ModelSelection.simulatorPreview
+    @State private var resumeEditing: Bool = false
+    @State private var showModelSetupAfterDismiss = false
     /// Leave conversation context above a long voice notice; its content remains scrollable.
     var noticeHeight: CGFloat = 360
     @State private var voiceContentHeight: CGFloat = 0
@@ -1416,7 +1421,8 @@ struct ComposerInputView: View {
         let radius = (buttonHitSide + 2 * controlInset) / 2
         return expanded ? min(24, radius) : radius
     }
-    private var expanded: Bool { typeSize >= .xxxLarge }
+    private var shortcutsVisible: Bool { focused || taskSettings != nil || resumeEditing }
+    private var expanded: Bool { shortcutsVisible || typeSize >= .xxxLarge }
 
     private var voice: VoiceModel { model.voice }
     private var hasText: Bool { !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -1439,11 +1445,11 @@ struct ComposerInputView: View {
                 ways
                     .padding(.bottom, 2)
             }
-            if focused, let mentionState = currentMention {
+            if focused, taskSettings == nil, let mentionState = currentMention {
                 MentionPicker(
                     state: mentionState,
                     composerWidth: composerWidth,
-                    caretX: mentionCaretX.map { $0 + buttonHitSide + controlSpacing + controlInset },
+                    caretX: mentionCaretX.map { $0 + 8 + controlInset },
                     pick: { pickApp($0, replacing: mentionState.triggerLength, keepFocus: true) },
                     browseAll: {
                         pendingMentionReplaceLength = mentionState.triggerLength
@@ -1453,8 +1459,7 @@ struct ComposerInputView: View {
                     }
                 )
             }
-            // One row on one glass sheet (ESP-376): plus, the message, and the one button that talks,
-            // sends or stops. The buttons inside are plain fills: no glass on glass.
+            // One glass surface for the editor and its controls, in both layouts.
             Group {
                 if voice.talkState != nil || needsKey {
                     ScrollView {
@@ -1501,6 +1506,18 @@ struct ComposerInputView: View {
                             mainButton
                         }
                         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                        taskShortcut(.approval, value: model.approvalMode.title) {
+                            Image(systemName: model.approvalMode.composerSymbol)
+                                .font(.body.weight(.medium))
+                                .foregroundStyle(model.approvalMode.composerTint)
+                        }
+                        taskShortcut(.model) {
+                            ComposerBrainOutline()
+                                .stroke(style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round))
+                                .frame(width: 22, height: 22)
+                                .foregroundStyle(.secondary)
+                        }
+                        .disabled(running)
                     }
                     .simultaneousGesture(swipe)
                     .transition(.blurReplace)
@@ -1508,10 +1525,17 @@ struct ComposerInputView: View {
             }
             .padding(controlInset)
             .contentShape(.rect)
-            .onTapGesture { if voice.talkState == nil, !needsKey { focused = true } }
+            .onTapGesture { if voice.talkState == nil, !needsKey, taskSettings == nil { focused = true } }
             .glassSurface(in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous), fallback: .bar)
             .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { composerWidth = $0 }
-            .animation(reduceMotion ? nil : .easeInOut(duration: 0.24), value: expanded)
+            .animation(reduceMotion ? nil : .smooth(duration: 0.27), value: expanded)
+            .sheet(item: $taskSettings, onDismiss: finishTaskSettings) { kind in
+                ComposerTaskSettings(kind: kind, previewSelection: $modelPreviewSelection) {
+                    showModelSetupAfterDismiss = true
+                    resumeEditing = false
+                    taskSettings = nil
+                }
+            }
         }
         .animation(.snappy, value: dictation.on)
         .animation(reduceMotion ? nil : .snappy(duration: 0.26), value: adding)
@@ -1593,10 +1617,14 @@ struct ComposerInputView: View {
             .ignoresSafeArea()
         }
         .onChange(of: conversationID) {
+            resumeEditing = false
+            taskSettings = nil
             withAnimation(.snappy) { attachmentDraft.reset() }
             problem = nil
         }
         .onChange(of: restarts) {
+            resumeEditing = false
+            taskSettings = nil
             let hadDraft = !input.isEmpty || !attachments.isEmpty
             withAnimation(.snappy) { attachmentDraft.reset() }
             adding = false
@@ -1719,6 +1747,40 @@ struct ComposerInputView: View {
         .accessibilityShowsLargeContentViewer {
             Label("Dictate", systemImage: "mic")
         }
+    }
+
+    private func taskShortcut<Icon: View>(_ kind: ComposerTaskSettings.Kind, value: String = "",
+                                          @ViewBuilder icon: () -> Icon) -> some View {
+        Button {
+            resumeEditing = focused
+            taskSettings = kind
+            adding = false
+            focused = false
+        } label: {
+            icon()
+                .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                .frame(width: 44, height: 44)
+                .contentShape(.interaction, Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text(kind.title))
+        .accessibilityValue(value)
+        .accessibilityIdentifier("composer.settings.\(kind.rawValue)")
+        .accessibilityHidden(!shortcutsVisible)
+        .allowsHitTesting(shortcutsVisible && taskSettings == nil)
+        .opacity(shortcutsVisible ? 1 : 0)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.14).delay(shortcutsVisible ? 0.10 : 0),
+                   value: shortcutsVisible)
+    }
+
+    private func finishTaskSettings() {
+        if showModelSetupAfterDismiss {
+            showModelSetupAfterDismiss = false
+            openModel()
+        } else if resumeEditing, voice.talkState == nil, !needsKey {
+            focused = true
+        }
+        resumeEditing = false
     }
 
     // MARK: The plus menu

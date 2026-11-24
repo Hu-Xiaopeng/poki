@@ -25,6 +25,12 @@ struct ComposerLayout: Layout {
                           anchor: .bottomLeading, proposal: ProposedViewSize(sizes.field))
         subviews[2].place(at: CGPoint(x: bounds.maxX, y: bottom), anchor: .bottomTrailing,
                           proposal: ProposedViewSize(sizes.trailing))
+        // Keep shortcut widths out of the compact editor measurement so the editor can
+        // interpolate smoothly on focus, even on widths that could not fit all five views inline.
+        subviews[3].place(at: CGPoint(x: bounds.minX + sizes.leading.width, y: bottom), anchor: .bottomLeading,
+                          proposal: .unspecified)
+        subviews[4].place(at: CGPoint(x: bounds.maxX - sizes.trailing.width, y: bottom), anchor: .bottomTrailing,
+                          proposal: .unspecified)
     }
 
     private func measure(width: CGFloat, subviews: Subviews)
