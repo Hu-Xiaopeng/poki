@@ -76,6 +76,7 @@ struct ComposerTaskSettings: View {
                 let selected = model.approvalMode == mode
                 Button {
                     model.approvalMode = mode
+                    dismiss()
                 } label: {
                     HStack(alignment: .firstTextBaseline, spacing: 12) {
                         Image(systemName: mode.composerSymbol)

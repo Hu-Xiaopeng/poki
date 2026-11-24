@@ -40,10 +40,13 @@ final class ComposerTaskSettingsUITests: XCTestCase {
         for option in options {
             XCTAssertTrue(option.isHittable)
             option.tap()
+            XCTAssertTrue(close.waitForNonExistence(timeout: 5))
+            approval.tap()
+            XCTAssertTrue(option.waitForExistence(timeout: 5))
             XCTAssertTrue(option.isSelected)
         }
         originallySelected?.tap()
-        close.tap()
+        XCTAssertTrue(close.waitForNonExistence(timeout: 5))
         XCTAssertTrue(editor.waitForExistence(timeout: 5))
         XCTAssertTrue(approval.isHittable)
         XCTAssertEqual(editor.value as? String, "Draft for Poki")
