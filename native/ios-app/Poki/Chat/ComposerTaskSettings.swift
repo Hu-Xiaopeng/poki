@@ -32,7 +32,8 @@ struct ComposerTaskSettings: View {
 
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
-    @State private var approvalHeight: CGFloat?
+    @ScaledMetric(relativeTo: .body) private var approvalIconWidth = 24.0
+    @State private var contentHeight: CGFloat?
     @State private var modelVersion = ModelKeys.saved
     let kind: Kind
     @Binding var previewSelection: ModelSelection?
@@ -49,8 +50,9 @@ struct ComposerTaskSettings: View {
             .onScrollGeometryChange(for: CGFloat.self) { geometry in
                 ceil(geometry.contentSize.height + geometry.contentInsets.top)
             } action: { _, height in
-                if kind == .approval, height > 0 { approvalHeight = height }
+                if height > 0 { contentHeight = height }
             }
+            .environment(\.defaultMinListRowHeight, 44)
             .settingsPage()
             .navigationTitle(kind.title)
             .navigationBarTitleDisplayMode(.inline)
@@ -61,7 +63,7 @@ struct ComposerTaskSettings: View {
                 }
             }
         }
-        .presentationDetents(kind == .approval ? [approvalHeight.map { .height($0) } ?? .medium] : [.large])
+        .presentationDetents([contentHeight.map { .height($0) } ?? .medium])
         .presentationDragIndicator(.visible)
         .onReceive(NotificationCenter.default.publisher(for: ModelKeys.changed)) { _ in
             modelVersion = ModelKeys.saved
@@ -75,10 +77,10 @@ struct ComposerTaskSettings: View {
                 Button {
                     model.approvalMode = mode
                 } label: {
-                    HStack(spacing: 12) {
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
                         Image(systemName: mode.composerSymbol)
                             .foregroundStyle(mode.composerTint)
-                            .frame(minWidth: 24)
+                            .frame(minWidth: approvalIconWidth)
                             .accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 4) {
                             Text(verbatim: mode.title)
@@ -89,8 +91,6 @@ struct ComposerTaskSettings: View {
                         Spacer(minLength: 8)
                         selectionMark(selected)
                     }
-                    .padding(.vertical, 4)
-                    .frame(minHeight: 44)
                     .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
@@ -177,7 +177,6 @@ struct ComposerTaskSettings: View {
                             Spacer(minLength: 8)
                             selectionMark(selected)
                         }
-                        .frame(minHeight: 44)
                         .contentShape(.rect)
                     }
                     .buttonStyle(.plain)

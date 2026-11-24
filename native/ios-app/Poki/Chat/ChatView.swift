@@ -1414,6 +1414,11 @@ struct ComposerInputView: View {
     @ScaledMetric(relativeTo: .body) private var fieldHeight = 112.0
 
     private var buttonDiameter: CGFloat { min(56, max(36, scaledButtonDiameter)) }
+    private var shortcutHitSide: CGFloat {
+        let available = composerWidth - 2 * controlInset - 3 * buttonHitSide - 4
+        return max(44, min(buttonHitSide, available / 2))
+    }
+    private var shortcutGlyphSide: CGFloat { shortcutHitSide / 2 }
     private var buttonHitSide: CGFloat { max(44, buttonDiameter) }
     private var controlInset: CGFloat { min(8, max(4, scaledControlInset)) }
     private var controlSpacing: CGFloat { min(12, max(6, scaledControlSpacing)) }
@@ -1508,13 +1513,13 @@ struct ComposerInputView: View {
                         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                         taskShortcut(.approval, value: model.approvalMode.title) {
                             Image(systemName: model.approvalMode.composerSymbol)
-                                .font(.system(size: 22, weight: .medium))
+                                .font(.system(size: shortcutGlyphSide, weight: .medium))
                                 .foregroundStyle(model.approvalMode.composerTint)
                         }
                         taskShortcut(.model) {
                             ComposerBrainOutline()
-                                .stroke(style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round))
-                                .frame(width: 22, height: 22)
+                                .stroke(style: StrokeStyle(lineWidth: shortcutGlyphSide / 14, lineCap: .round, lineJoin: .round))
+                                .frame(width: shortcutGlyphSide, height: shortcutGlyphSide)
                                 .foregroundStyle(.secondary)
                         }
                         .disabled(running)
@@ -1758,8 +1763,7 @@ struct ComposerInputView: View {
             focused = false
         } label: {
             icon()
-                .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-                .frame(width: 44, height: 44)
+                .frame(width: shortcutHitSide, height: shortcutHitSide)
                 .contentShape(.interaction, Rectangle())
         }
         .buttonStyle(.plain)
