@@ -1364,7 +1364,7 @@ struct ComposerSettingsView: View {
                     .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
             }
         }
-        .navigationTitle("Input Field")
+        .navigationTitle(AppLocalization.text("Input Field"))
         .navigationBarTitleDisplayMode(.inline)
     }
 }

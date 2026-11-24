@@ -1544,7 +1544,7 @@ struct ComposerInputView: View {
                             ComposerBrainOutline()
                                 .stroke(style: StrokeStyle(lineWidth: shortcutGlyphSide / 14, lineCap: .round, lineJoin: .round))
                                 .frame(width: shortcutGlyphSide, height: shortcutGlyphSide)
-                                .foregroundStyle(.white)
+                                .foregroundStyle(Color(.label))
                         }
                         .disabled(running)
                     }
@@ -1812,7 +1812,7 @@ struct ComposerInputView: View {
                 .contentShape(.interaction, Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(Text(kind.title))
+        .accessibilityLabel(Text(verbatim: AppLocalization.text(kind.title)))
         .accessibilityValue(value)
         .accessibilityIdentifier("\(controlIdentifierPrefix).settings.\(kind.rawValue)")
         .accessibilityHidden(!visible)

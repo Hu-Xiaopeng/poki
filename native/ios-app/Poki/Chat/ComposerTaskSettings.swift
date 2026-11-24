@@ -17,7 +17,7 @@ struct ComposerTaskSettings: View {
 
         var id: Self { self }
 
-        var title: LocalizedStringKey {
+        var title: LocalizedStringResource {
             switch self {
             case .approval: "Approvals"
             case .model: "Model"
@@ -65,7 +65,7 @@ struct ComposerTaskSettings: View {
             }
             .environment(\.defaultMinListRowHeight, 44)
             .settingsPage()
-            .navigationTitle(kind.title)
+            .navigationTitle(AppLocalization.text(kind.title))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
