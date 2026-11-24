@@ -39,12 +39,30 @@ struct ComposerLayout: Layout {
         let trailing = subviews[2].sizeThatFits(.unspecified)
         let inlineWidth = width - leading.width - trailing.width - 2 * spacing
         let progress = inlineWidth < 140 ? 1 : min(1, max(0, expansion))
-        let fieldWidth = inlineWidth + (width - inlineWidth) * progress
+        let fieldWidth = inlineWidth + (width - 16 - inlineWidth) * progress
         let field = subviews[1].sizeThatFits(ProposedViewSize(width: fieldWidth, height: nil))
         let controlsHeight = max(leading.height, trailing.height)
         let inlineRise = max(0, (controlsHeight - field.height) / 2)
         let fieldRise = inlineRise + (controlsHeight + spacing - inlineRise) * progress
-        return (leading, field, trailing, (leading.width + spacing) * (1 - progress), fieldRise,
+        return (leading, field, trailing, (leading.width + spacing) * (1 - progress) + 8 * progress, fieldRise,
                 max(controlsHeight, field.height + fieldRise))
+    }
+}
+
+
+/// Reveals the controls as the editor clears their row, on the same animation as the layout.
+struct ComposerShortcutReveal: ViewModifier, Animatable {
+    var progress: CGFloat
+
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        let reveal = min(1, max(0, (progress - 0.35) / 0.65))
+        content
+            .opacity(Double(reveal))
+            .scaleEffect(0.94 + 0.06 * reveal)
     }
 }

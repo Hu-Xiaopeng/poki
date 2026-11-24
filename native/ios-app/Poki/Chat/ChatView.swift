@@ -1428,6 +1428,7 @@ struct ComposerInputView: View {
     }
     private var shortcutsVisible: Bool { focused || taskSettings != nil || resumeEditing }
     private var expanded: Bool { shortcutsVisible || typeSize >= .xxxLarge }
+    private var expansionAnimation: Animation? { reduceMotion ? nil : .smooth(duration: 0.28) }
 
     private var voice: VoiceModel { model.voice }
     private var hasText: Bool { !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -1504,7 +1505,6 @@ struct ComposerInputView: View {
                                         .padding(.top, 6).allowsHitTesting(false).accessibilityHidden(true)
                                 }
                             }
-                            .padding(.horizontal, expanded ? 8 : 0)
                             .accessibilitySortPriority(1)
                         HStack(spacing: 4) {
                             if dictation.on { dictating } else if dictationButton, !running { microphone }
@@ -1533,7 +1533,7 @@ struct ComposerInputView: View {
             .onTapGesture { if voice.talkState == nil, !needsKey, taskSettings == nil { focused = true } }
             .glassSurface(in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous), fallback: .bar)
             .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { composerWidth = $0 }
-            .animation(reduceMotion ? nil : .smooth(duration: 0.27), value: expanded)
+            .animation(expansionAnimation, value: expanded)
             .sheet(item: $taskSettings, onDismiss: finishTaskSettings) { kind in
                 ComposerTaskSettings(kind: kind, previewSelection: $modelPreviewSelection) {
                     showModelSetupAfterDismiss = true
@@ -1772,9 +1772,8 @@ struct ComposerInputView: View {
         .accessibilityIdentifier("composer.settings.\(kind.rawValue)")
         .accessibilityHidden(!shortcutsVisible)
         .allowsHitTesting(shortcutsVisible && taskSettings == nil)
-        .opacity(shortcutsVisible ? 1 : 0)
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.14).delay(shortcutsVisible ? 0.10 : 0),
-                   value: shortcutsVisible)
+        .modifier(ComposerShortcutReveal(progress: shortcutsVisible ? 1 : 0))
+        .animation(expansionAnimation, value: shortcutsVisible)
     }
 
     private func finishTaskSettings() {
