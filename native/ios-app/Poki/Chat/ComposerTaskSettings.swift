@@ -1,5 +1,15 @@
 import SwiftUI
 
+private extension VerticalAlignment {
+    private enum ApprovalTitleCenter: AlignmentID {
+        static func defaultValue(in dimensions: ViewDimensions) -> CGFloat {
+            dimensions[VerticalAlignment.center]
+        }
+    }
+
+    static let approvalTitleCenter = VerticalAlignment(ApprovalTitleCenter.self)
+}
+
 /// The composer's shortcuts use the same settings as Poki's profile and Settings.
 struct ComposerTaskSettings: View {
     enum Kind: String, Identifiable {
@@ -78,12 +88,13 @@ struct ComposerTaskSettings: View {
                     model.approvalMode = mode
                     dismiss()
                 } label: {
-                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    HStack(alignment: .approvalTitleCenter, spacing: 12) {
                         mode.composerIcon(size: approvalIconSize)
                             .frame(minWidth: approvalIconSize + 2)
                             .accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 4) {
                             Text(verbatim: mode.title)
+                                .alignmentGuide(.approvalTitleCenter) { $0[VerticalAlignment.center] }
                             Text(mode.composerDescription)
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
