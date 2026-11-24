@@ -272,17 +272,17 @@ private struct ComposerConfirmationButtonOutline: Shape {
         let face = CGRect(origin: point(4.2, 2.5), size: CGSize(width: 15.6 * unit, height: 9.2 * unit))
         var outline = Path(ellipseIn: face)
         outline.move(to: point(4.2, 7.1))
-        outline.addCurve(to: point(3, 14), control1: point(3.8, 9.5), control2: point(3, 12.1))
-        outline.addCurve(to: point(12, 18), control1: point(3, 16.5), control2: point(7.4, 18))
-        outline.addCurve(to: point(21, 14), control1: point(16.6, 18), control2: point(21, 16.5))
-        outline.addCurve(to: point(19.8, 7.1), control1: point(21, 12.1), control2: point(20.2, 9.5))
+        outline.addLine(to: point(4.2, 14))
+        outline.addCurve(to: point(12, 18), control1: point(4.2, 16.5), control2: point(7.4, 18))
+        outline.addCurve(to: point(19.8, 14), control1: point(16.6, 18), control2: point(19.8, 16.5))
+        outline.addLine(to: point(19.8, 7.1))
 
         // Only the exposed part of the base is visible around the cap.
-        outline.move(to: point(3.4, 11.7))
+        outline.move(to: point(4.2, 11.7))
         outline.addQuadCurve(to: point(1.2, 15.7), control: point(1.2, 13.3))
         outline.addCurve(to: point(12, 21.5), control1: point(1.2, 19), control2: point(6.3, 21.5))
         outline.addCurve(to: point(22.8, 15.7), control1: point(17.7, 21.5), control2: point(22.8, 19))
-        outline.addQuadCurve(to: point(20.6, 11.7), control: point(22.8, 13.3))
+        outline.addQuadCurve(to: point(19.8, 11.7), control: point(22.8, 13.3))
         return outline
     }
 }
