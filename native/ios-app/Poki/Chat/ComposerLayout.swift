@@ -66,3 +66,24 @@ struct ComposerShortcutReveal: ViewModifier, Animatable {
             .scaleEffect(0.94 + 0.06 * reveal)
     }
 }
+
+
+/// The microphone capsule and its yoke, with a short stem and no horizontal foot.
+struct ComposerMicrophoneOutline: Shape {
+    func path(in rect: CGRect) -> Path {
+        func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(x: rect.minX + rect.width * x / 24, y: rect.minY + rect.height * y / 24)
+        }
+
+        let capsule = CGRect(origin: point(8.4, 1.8), size: CGSize(width: rect.width * 0.3, height: rect.height * 0.55))
+        var outline = Path(roundedRect: capsule, cornerRadius: capsule.width / 2)
+        outline.move(to: point(4.8, 10.7))
+        outline.addLine(to: point(4.8, 12))
+        outline.addQuadCurve(to: point(12, 19.2), control: point(4.8, 19.2))
+        outline.addQuadCurve(to: point(19.2, 12), control: point(19.2, 19.2))
+        outline.addLine(to: point(19.2, 10.7))
+        outline.move(to: point(12, 19.2))
+        outline.addLine(to: point(12, 22.2))
+        return outline
+    }
+}

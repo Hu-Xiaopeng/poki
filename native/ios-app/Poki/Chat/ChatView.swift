@@ -1726,9 +1726,13 @@ struct ComposerInputView: View {
     /// until you tap Send.
     private var dictating: some View {
         Button { dictation.stop(model) } label: {
-            Image(systemName: "mic.fill")
-                .font(.body.weight(.medium)).foregroundStyle(Tint.red)
-                .symbolEffect(.pulse, isActive: true)
+            microphoneGlyph
+                .foregroundStyle(Tint.red)
+                .phaseAnimator([false, true]) { glyph, dimmed in
+                    glyph.opacity(dimmed && !reduceMotion ? 0.6 : 1)
+                } animation: { _ in
+                    reduceMotion ? nil : .easeInOut(duration: 0.65)
+                }
                 .frame(width: buttonHitSide, height: buttonHitSide).contentShape(.rect)
         }
         .buttonStyle(.plain)
@@ -1742,8 +1746,8 @@ struct ComposerInputView: View {
     /// is sent until you tap Send.
     private var microphone: some View {
         Button { dictation.start(model, after: input) } label: {
-            Image(systemName: "mic")
-                .font(.body.weight(.medium)).foregroundStyle(Color(.label))
+            microphoneGlyph
+                .foregroundStyle(Color(.label))
                 .frame(width: buttonHitSide, height: buttonHitSide).contentShape(.rect)
         }
         .buttonStyle(.plain)
@@ -1753,6 +1757,13 @@ struct ComposerInputView: View {
         .accessibilityShowsLargeContentViewer {
             Label("Dictate", systemImage: "mic")
         }
+    }
+
+    private var microphoneGlyph: some View {
+        let side = shortcutGlyphSide + 2
+        return ComposerMicrophoneOutline()
+            .stroke(style: StrokeStyle(lineWidth: side / 14, lineCap: .round, lineJoin: .round))
+            .frame(width: side, height: side)
     }
 
     private func taskShortcut<Icon: View>(_ kind: ComposerTaskSettings.Kind, value: String = "",
