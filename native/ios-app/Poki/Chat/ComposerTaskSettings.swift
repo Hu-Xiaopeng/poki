@@ -122,10 +122,6 @@ struct ComposerTaskSettings: View {
         }
         #if DEBUG && targetEnvironment(simulator)
         if previewSelection != nil {
-            Section {
-                Label("Simulated accounts", systemImage: "testtube.2")
-                    .foregroundStyle(.secondary)
-            }
             modelGroup(AppLocalization.text(LocalizedStringResource("ChatGPT Subscription")),
                        provider: .chatgpt, choices: ModelProvider.chatgpt.models)
             modelGroup("DeepSeek API", provider: .deepseek, choices: ModelProvider.deepseek.models)
@@ -138,7 +134,17 @@ struct ComposerTaskSettings: View {
         Section {
             Button(action: openModelSetup) {
                 Label("Add Model", systemImage: "plus")
+                    .labelStyle(.titleAndIcon)
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .contentShape(.rect)
             }
+            .buttonStyle(.plain)
+            .glassSurface(in: Capsule(), interactive: true, fallback: .bar)
+            .listRowInsets(EdgeInsets())
+            .listRowBackground(Color.clear)
             .accessibilityIdentifier("composer.model.setup")
         } footer: {
             if providers.isEmpty, previewSelection == nil {
