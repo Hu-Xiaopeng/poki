@@ -32,6 +32,7 @@ struct ComposerTaskSettings: View {
 
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    @State private var approvalHeight: CGFloat?
     @State private var modelVersion = ModelKeys.saved
     let kind: Kind
     @Binding var previewSelection: ModelSelection?
@@ -45,6 +46,11 @@ struct ComposerTaskSettings: View {
                 case .model: modelOptions
                 }
             }
+            .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                ceil(geometry.contentSize.height + geometry.contentInsets.top)
+            } action: { _, height in
+                if kind == .approval, height > 0 { approvalHeight = height }
+            }
             .settingsPage()
             .navigationTitle(kind.title)
             .navigationBarTitleDisplayMode(.inline)
@@ -55,7 +61,7 @@ struct ComposerTaskSettings: View {
                 }
             }
         }
-        .presentationDetents([.large])
+        .presentationDetents(kind == .approval ? [approvalHeight.map { .height($0) } ?? .medium] : [.large])
         .presentationDragIndicator(.visible)
         .onReceive(NotificationCenter.default.publisher(for: ModelKeys.changed)) { _ in
             modelVersion = ModelKeys.saved
