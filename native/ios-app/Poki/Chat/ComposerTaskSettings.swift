@@ -261,7 +261,7 @@ struct ComposerBrainOutline: Shape {
 }
 
 
-/// A rounded keycap with a visible lower edge and a confirmation mark on its face.
+/// A round push button viewed from above, with a shallow side wall.
 private struct ComposerConfirmationButtonOutline: Shape {
     func path(in rect: CGRect) -> Path {
         let unit = min(rect.width, rect.height) / 24
@@ -269,18 +269,13 @@ private struct ComposerConfirmationButtonOutline: Shape {
             CGPoint(x: rect.midX + (x - 12) * unit, y: rect.midY + (y - 12) * unit)
         }
 
-        let face = CGRect(origin: point(2.5, 4.5), size: CGSize(width: 19 * unit, height: 12 * unit))
-        var outline = Path(roundedRect: face, cornerRadius: 3.8 * unit)
-        outline.move(to: point(2.5, 12.7))
-        outline.addLine(to: point(2.5, 15.5))
-        outline.addQuadCurve(to: point(6.3, 19.5), control: point(2.5, 19.5))
-        outline.addLine(to: point(17.7, 19.5))
-        outline.addQuadCurve(to: point(21.5, 15.5), control: point(21.5, 19.5))
-        outline.addLine(to: point(21.5, 12.7))
-
-        outline.move(to: point(8.8, 10.4))
-        outline.addLine(to: point(11, 12.6))
-        outline.addLine(to: point(15.3, 8.5))
+        let face = CGRect(origin: point(2.5, 4.5), size: CGSize(width: 19 * unit, height: 10 * unit))
+        var outline = Path(ellipseIn: face)
+        outline.move(to: point(2.5, 9.5))
+        outline.addLine(to: point(2.5, 14))
+        outline.addCurve(to: point(12, 19), control1: point(2.5, 16.8), control2: point(6.8, 19))
+        outline.addCurve(to: point(21.5, 14), control1: point(17.2, 19), control2: point(21.5, 16.8))
+        outline.addLine(to: point(21.5, 9.5))
         return outline
     }
 }
