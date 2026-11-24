@@ -42,6 +42,7 @@ struct ComposerTaskSettings: View {
 
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var contentHeight: CGFloat?
     @State private var modelVersion = ModelKeys.saved
     let kind: Kind
@@ -88,19 +89,24 @@ struct ComposerTaskSettings: View {
                     model.approvalMode = mode
                     dismiss()
                 } label: {
-                    HStack(alignment: .approvalTitleCenter, spacing: 12) {
-                        mode.composerIcon(size: approvalIconSize)
-                            .frame(minWidth: approvalIconSize + 2)
-                            .accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(verbatim: mode.title)
-                                .alignmentGuide(.approvalTitleCenter) { $0[VerticalAlignment.center] }
-                            Text(mode.composerDescription)
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(alignment: .approvalTitleCenter, spacing: 12) {
+                            mode.composerIcon(size: approvalIconSize)
+                                .frame(minWidth: approvalIconSize + 2)
+                                .accessibilityHidden(true)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(verbatim: mode.title)
+                                    .alignmentGuide(.approvalTitleCenter) { $0[VerticalAlignment.center] }
+                                if !typeSize.isAccessibilitySize {
+                                    approvalDescription(for: mode)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            selectionMark(selected)
                         }
-                        Spacer(minLength: 8)
-                        selectionMark(selected)
+                        if typeSize.isAccessibilitySize {
+                            approvalDescription(for: mode)
+                        }
                     }
                     .contentShape(.rect)
                 }
@@ -112,6 +118,12 @@ struct ComposerTaskSettings: View {
             Text(ApprovalCopy.alwaysConfirm)
         }
         .sensoryFeedback(.selection, trigger: model.approvalMode)
+    }
+
+    private func approvalDescription(for mode: ApprovalClassifier.Mode) -> some View {
+        Text(mode.composerDescription)
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
     }
 
     @ViewBuilder private var modelOptions: some View {
