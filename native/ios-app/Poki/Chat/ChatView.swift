@@ -1353,6 +1353,10 @@ struct ComposerInputView: View {
     @Binding var adding: Bool
     @Binding var settingsPresented: Bool
     var running: Bool
+    var isSettingsPreview = false
+    @AppStorage(ComposerSettingsView.modelKey) private var showsModelShortcut = true
+    @AppStorage(ComposerSettingsView.approvalKey) private var showsApprovalShortcut = true
+    @State private var previewTaps = 0
     /// How far the running task is, 0 to 1, for the ring around Stop; nil when unknown.
     var progress: Double? = nil
     /// Goes up with each tap on New Conversation on the home page: a message under way (words or
@@ -1430,8 +1434,12 @@ struct ComposerInputView: View {
         return expanded ? min(24, radius) : radius
     }
     private var shortcutsVisible: Bool { focused || taskSettings != nil || resumeEditing }
-    private var expanded: Bool { shortcutsVisible || typeSize >= .xxxLarge }
+    private var expanded: Bool {
+        isSettingsPreview || (shortcutsVisible && (showsModelShortcut || showsApprovalShortcut)) || typeSize >= .xxxLarge
+    }
     private var expansionAnimation: Animation? { reduceMotion ? nil : .smooth(duration: 0.28) }
+
+    private var controlIdentifierPrefix: String { isSettingsPreview ? "composer.preview" : "composer" }
 
     private var voice: VoiceModel { model.voice }
     private var hasText: Bool { !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -1470,7 +1478,7 @@ struct ComposerInputView: View {
             }
             // One glass surface for the editor and its controls, in both layouts.
             Group {
-                if voice.talkState != nil || needsKey {
+                if !isSettingsPreview && (voice.talkState != nil || needsKey) {
                     ScrollView {
                         Group {
                             if let talk = voice.talkState {
@@ -1508,6 +1516,7 @@ struct ComposerInputView: View {
                                         .padding(.top, 6).allowsHitTesting(false).accessibilityHidden(true)
                                 }
                             }
+                            .allowsHitTesting(!isSettingsPreview)
                             .accessibilitySortPriority(1)
                         HStack(spacing: 4) {
                             if dictation.on { dictating } else if dictationButton, !running { microphone }
@@ -1531,7 +1540,7 @@ struct ComposerInputView: View {
             }
             .padding(controlInset)
             .contentShape(.rect)
-            .onTapGesture { if voice.talkState == nil, !needsKey, taskSettings == nil { focused = true } }
+            .onTapGesture { if !isSettingsPreview, voice.talkState == nil, !needsKey, taskSettings == nil { focused = true } }
             .glassSurface(in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous), fallback: .bar)
             .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { composerWidth = $0 }
             .animation(expansionAnimation, value: expanded)
@@ -1553,7 +1562,7 @@ struct ComposerInputView: View {
         // Talk with Poki with no voice key, from the field's button, a link or Poki's profile: what it is
         // missing. The keyboard goes down: the field it belongs to is not on screen.
         .onChange(of: voice.keyAsked, initial: true) { _, asked in
-            guard asked else { return }
+            guard !isSettingsPreview, asked else { return }
             voice.keyAsked = false
             focused = false
             needsKey = true
@@ -1581,7 +1590,8 @@ struct ComposerInputView: View {
         .onChange(of: input) { _, text in
             if let sent, text == sent.text, Date().timeIntervalSince(sent.at) < 1 { input = "" }
         }
-        .onDisappear { dictation.stop(model) }
+        .onDisappear { if !isSettingsPreview { dictation.stop(model) } }
+        .sensoryFeedback(.selection, trigger: previewTaps)
         .sensoryFeedback(.impact(weight: .light), trigger: sends)
         .task(id: problem) {
             guard problem != nil else { return }
@@ -1643,12 +1653,12 @@ struct ComposerInputView: View {
             }
         }
         #if DEBUG && targetEnvironment(simulator)
-        .onAppear { if let item = TestAttachment.take() { attachments.append(item) } }
+        .onAppear { if !isSettingsPreview, let item = TestAttachment.take() { attachments.append(item) } }
         // Screenshots of talking, from a simulator's development build: `-pokiTalk needs-key` (Talk with
         // Poki without a key), `add-key` (where its Add Key leads), `talk` (a talk under way; with
         // `-pokiTalkRehearsal 1` it runs TalkRehearsal's turn) and `ended` (that talk, ended by End).
         .task {
-            guard let shot = UserDefaults.standard.string(forKey: "pokiTalk") else { return }
+            guard !isSettingsPreview, let shot = UserDefaults.standard.string(forKey: "pokiTalk") else { return }
             try? await Task.sleep(for: .seconds(1))
             switch shot {
             case "needs-key": needsKey = true
@@ -1669,7 +1679,7 @@ struct ComposerInputView: View {
             }
         }
         .task {
-            guard let scene = UserDefaults.standard.string(forKey: "pokiAppPicker") else { return }
+            guard !isSettingsPreview, let scene = UserDefaults.standard.string(forKey: "pokiAppPicker") else { return }
             try? await Task.sleep(for: .milliseconds(600))
             switch scene {
             case "plus":
@@ -1716,6 +1726,7 @@ struct ComposerInputView: View {
             .onEnded { drag in
                 let scrolled = swipeScrolls ?? false
                 swipeScrolls = nil
+                guard !isSettingsPreview else { return }
                 let (dx, dy) = (drag.translation.width, drag.predictedEndTranslation.height)
                 guard abs(drag.translation.height) > abs(dx) * 1.5 else { return }
                 if dy < -36, !focused { focused = true }
@@ -1746,15 +1757,18 @@ struct ComposerInputView: View {
     /// Settings › Voice turned it on: dictation into the field. The words appear in the field; nothing
     /// is sent until you tap Send.
     private var microphone: some View {
-        Button { dictation.start(model, after: input) } label: {
+        Button {
+            guard !isSettingsPreview else { previewTaps += 1; return }
+            dictation.start(model, after: input)
+        } label: {
             microphoneGlyph
                 .foregroundStyle(Color(.label))
                 .frame(width: buttonHitSide, height: buttonHitSide).contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .disabled(voice.isOn)
+        .disabled(!isSettingsPreview && voice.isOn)
         .accessibilityLabel(Text("Dictate"))
-        .accessibilityIdentifier("composer.dictate")
+        .accessibilityIdentifier("\(controlIdentifierPrefix).dictate")
         .accessibilityShowsLargeContentViewer {
             Label("Dictate", systemImage: "mic")
         }
@@ -1769,7 +1783,10 @@ struct ComposerInputView: View {
 
     private func taskShortcut<Icon: View>(_ kind: ComposerTaskSettings.Kind, value: String = "",
                                           @ViewBuilder icon: () -> Icon) -> some View {
-        Button {
+        let enabled = kind == .model ? showsModelShortcut : showsApprovalShortcut
+        let visible = enabled && (isSettingsPreview || shortcutsVisible)
+        return Button {
+            guard !isSettingsPreview else { previewTaps += 1; return }
             settingsPresented = true
             resumeEditing = focused
             taskSettings = kind
@@ -1783,11 +1800,11 @@ struct ComposerInputView: View {
         .buttonStyle(.plain)
         .accessibilityLabel(Text(kind.title))
         .accessibilityValue(value)
-        .accessibilityIdentifier("composer.settings.\(kind.rawValue)")
-        .accessibilityHidden(!shortcutsVisible)
-        .allowsHitTesting(shortcutsVisible && taskSettings == nil)
-        .modifier(ComposerShortcutReveal(progress: shortcutsVisible ? 1 : 0))
-        .animation(expansionAnimation, value: shortcutsVisible)
+        .accessibilityIdentifier("\(controlIdentifierPrefix).settings.\(kind.rawValue)")
+        .accessibilityHidden(!visible)
+        .allowsHitTesting(visible && taskSettings == nil)
+        .modifier(ComposerShortcutReveal(progress: visible ? 1 : 0))
+        .animation(expansionAnimation, value: visible)
     }
 
     private func finishTaskSettings() {
@@ -1811,6 +1828,7 @@ struct ComposerInputView: View {
     /// photo from the camera, or a picture or PDF from Files. Rotates 45° when expanded.
     private var plus: some View {
         Button {
+            guard !isSettingsPreview else { previewTaps += 1; return }
             withAnimation(reduceMotion ? nil : .snappy(duration: 0.26)) { adding.toggle() }
         } label: {
             Image(systemName: "plus")
@@ -1823,7 +1841,7 @@ struct ComposerInputView: View {
         .buttonStyle(.plain)
         .accessibilityLabel(Text("Add Apps, Photos or Files"))
         .accessibilityAddTraits(adding ? .isSelected : [])
-        .accessibilityIdentifier("composer.plus")
+        .accessibilityIdentifier("\(controlIdentifierPrefix).plus")
         .accessibilityShowsLargeContentViewer {
             Label("Add Apps, Photos or Files", systemImage: "plus")
         }
@@ -1919,6 +1937,7 @@ struct ComposerInputView: View {
         let talking = !running && !canSend
         let diameter = talking ? compactButtonDiameter : buttonDiameter
         return Button {
+            guard !isSettingsPreview else { previewTaps += 1; return }
             // On an empty field: Talk with Poki at once. Dictation has its own
             // button beside this one. Without a voice key `openVoice` has the field say so.
             if running { stop() } else if canSend { submit() } else { dictation.stop(model); openVoice() }
@@ -1943,7 +1962,7 @@ struct ComposerInputView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(Text(running ? "Stop" : canSend ? "Send" : "Talk with Poki"))
-        .accessibilityIdentifier("composer.main")
+        .accessibilityIdentifier("\(controlIdentifierPrefix).main")
         .accessibilityShowsLargeContentViewer {
             Label(running ? "Stop" : canSend ? "Send" : "Talk with Poki",
                   systemImage: running ? "stop.fill" : canSend ? "arrow.up" : "waveform")
