@@ -1408,7 +1408,6 @@ struct ComposerInputView: View {
     @State private var recentAppsVersion = 0
     /// A swipe down that started on a message scrolled away from its first line: it scrolls the message.
     @State private var swipeScrolls: Bool?
-    @Environment(\.colorScheme) private var scheme
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ScaledMetric(relativeTo: .body) private var scaledButtonDiameter = 44.0
@@ -1818,7 +1817,6 @@ struct ComposerInputView: View {
                 .font(.system(size: compactButtonDiameter / 2, weight: .medium)).dynamicTypeSize(...DynamicTypeSize.xxxLarge).foregroundStyle(Color(.label))
                 .rotationEffect(.degrees(adding ? 45 : 0))
                 .frame(width: compactButtonDiameter, height: compactButtonDiameter)
-                .background(Color(.label).opacity(scheme == .dark ? 0.16 : 0.12), in: .circle)
                 .frame(width: buttonHitSide, height: buttonHitSide)
                 .contentShape(.interaction, Rectangle())
         }
