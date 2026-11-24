@@ -1520,7 +1520,7 @@ struct ComposerInputView: View {
                             ComposerBrainOutline()
                                 .stroke(style: StrokeStyle(lineWidth: shortcutGlyphSide / 14, lineCap: .round, lineJoin: .round))
                                 .frame(width: shortcutGlyphSide, height: shortcutGlyphSide)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.white)
                         }
                         .disabled(running)
                     }
