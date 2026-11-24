@@ -137,8 +137,8 @@ struct ComposerTaskSettings: View {
                     .labelStyle(.titleAndIcon)
                     .foregroundStyle(.primary)
                     .padding(.horizontal, 20)
-                    .padding(.vertical, 10)
-                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .padding(.vertical, 12)
+                    .frame(maxWidth: .infinity, minHeight: 50, alignment: .leading)
                     .contentShape(.rect)
             }
             .buttonStyle(.plain)
