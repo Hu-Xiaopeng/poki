@@ -208,7 +208,7 @@ extension ApprovalClassifier.Mode {
                 .foregroundStyle(.secondary)
         case .confirm:
             ComposerConfirmationButtonOutline()
-                .stroke(style: StrokeStyle(lineWidth: size / 13, lineCap: .round, lineJoin: .round))
+                .stroke(style: StrokeStyle(lineWidth: size / 17, lineCap: .round, lineJoin: .round))
                 .frame(width: size, height: size)
                 .foregroundStyle(.secondary)
         case .off:
@@ -269,20 +269,22 @@ private struct ComposerConfirmationButtonOutline: Shape {
             CGPoint(x: rect.midX + (x - 12) * unit, y: rect.midY + (y - 12) * unit)
         }
 
-        let face = CGRect(origin: point(4.2, 2.5), size: CGSize(width: 15.6 * unit, height: 9.2 * unit))
+        let face = CGRect(origin: point(4.6, 3.2), size: CGSize(width: 14.8 * unit, height: 9.4 * unit))
         var outline = Path(ellipseIn: face)
-        outline.move(to: point(4.2, 7.1))
-        outline.addLine(to: point(4.2, 14))
-        outline.addCurve(to: point(12, 18), control1: point(4.2, 16.5), control2: point(7.4, 18))
-        outline.addCurve(to: point(19.8, 14), control1: point(16.6, 18), control2: point(19.8, 16.5))
-        outline.addLine(to: point(19.8, 7.1))
+        outline.move(to: point(4.6, 7.9))
+        outline.addLine(to: point(4.6, 15.3))
+        outline.addCurve(to: point(12, 18.6), control1: point(4.6, 17.1), control2: point(8.1, 18.6))
+        outline.addCurve(to: point(19.4, 15.3), control1: point(15.9, 18.6), control2: point(19.4, 17.1))
+        outline.addLine(to: point(19.4, 7.9))
 
         // Only the exposed part of the base is visible around the cap.
-        outline.move(to: point(4.2, 11.7))
-        outline.addQuadCurve(to: point(1.2, 15.7), control: point(1.2, 13.3))
-        outline.addCurve(to: point(12, 21.5), control1: point(1.2, 19), control2: point(6.3, 21.5))
-        outline.addCurve(to: point(22.8, 15.7), control1: point(17.7, 21.5), control2: point(22.8, 19))
-        outline.addQuadCurve(to: point(19.8, 11.7), control: point(22.8, 13.3))
+        outline.move(to: point(4.6, 13.9))
+        outline.addCurve(to: point(12, 22), control1: point(-2.2, 16.6), control2: point(1.6, 22))
+        outline.addCurve(to: point(19.4, 13.9), control1: point(22.4, 22), control2: point(26.2, 16.6))
+
+        outline.move(to: point(9.6, 8))
+        outline.addLine(to: point(11.2, 9.3))
+        outline.addLine(to: point(14.6, 6.5))
         return outline
     }
 }
