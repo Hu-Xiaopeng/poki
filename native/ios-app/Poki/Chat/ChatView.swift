@@ -1534,7 +1534,8 @@ struct ComposerInputView: View {
             .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { composerWidth = $0 }
             .animation(expansionAnimation, value: expanded)
             .sheet(item: $taskSettings, onDismiss: finishTaskSettings) { kind in
-                ComposerTaskSettings(kind: kind, previewSelection: $modelPreviewSelection) {
+                ComposerTaskSettings(kind: kind, approvalIconSize: shortcutGlyphSide,
+                                     previewSelection: $modelPreviewSelection) {
                     showModelSetupAfterDismiss = true
                     resumeEditing = false
                     taskSettings = nil

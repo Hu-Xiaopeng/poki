@@ -32,11 +32,10 @@ struct ComposerTaskSettings: View {
 
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
-    @ScaledMetric(relativeTo: .body) private var approvalIconWidth = 24.0
-    @ScaledMetric(relativeTo: .body) private var approvalIconSize = 17.0
     @State private var contentHeight: CGFloat?
     @State private var modelVersion = ModelKeys.saved
     let kind: Kind
+    let approvalIconSize: CGFloat
     @Binding var previewSelection: ModelSelection?
     let openModelSetup: () -> Void
 
@@ -81,7 +80,7 @@ struct ComposerTaskSettings: View {
                 } label: {
                     HStack(alignment: .firstTextBaseline, spacing: 12) {
                         mode.composerIcon(size: approvalIconSize)
-                            .frame(minWidth: approvalIconWidth)
+                            .frame(minWidth: approvalIconSize + 2)
                             .accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 4) {
                             Text(verbatim: mode.title)
