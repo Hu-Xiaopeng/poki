@@ -513,11 +513,7 @@ enum CodexAccount {
             chatgptUserId = try container.decodeIfPresent(String.self, forKey: .chatgptUserId)
             userId = try container.decodeIfPresent(String.self, forKey: .userId)
             chatgptAccountId = try container.decodeIfPresent(String.self, forKey: .chatgptAccountId)
-            if container.contains(.chatgptAccountIsFedramp) {
-                chatgptAccountIsFedramp = try container.decode(Bool.self, forKey: .chatgptAccountIsFedramp)
-            } else {
-                chatgptAccountIsFedramp = false
-            }
+            chatgptAccountIsFedramp = try container.decodeIfPresent(Bool.self, forKey: .chatgptAccountIsFedramp) ?? false
         }
     }
 }
