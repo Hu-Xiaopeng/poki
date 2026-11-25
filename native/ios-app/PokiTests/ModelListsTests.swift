@@ -27,6 +27,15 @@ final class ModelListsTests: XCTestCase {
         XCTAssertTrue(ModelCatalog.all(.openrouter, storage: storage).map(\.id).contains("openai/gpt-6.2-sol"))
     }
 
+    func testPiSwiftsCatalogListsGPT62() {
+        // PiSwift v1.6.0 catalogues GPT-6.2, so the bundled setups only cover gateways and custom ids.
+        for (provider, id) in [("openai", "gpt-6.2-sol"), ("openai", "gpt-6.2-astra"),
+                               ("openai-codex", "gpt-6.2-sol"), ("openai-codex", "gpt-6.2-astra"),
+                               ("openrouter", "openai/gpt-6.2-sol"), ("openrouter", "openai/gpt-6.2-astra")] {
+            XCTAssertNotNil(getModel(provider: provider, modelId: id), "\(provider) \(id)")
+        }
+    }
+
     func testGPT62RunsWithItsOwnSetup() throws {
         let sol = try XCTUnwrap(ModelProvider.openai.piModel("gpt-6.2-sol", storage: storage))
         XCTAssertEqual(sol.id, "gpt-6.2-sol")

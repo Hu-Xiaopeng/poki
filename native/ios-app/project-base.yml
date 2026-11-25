@@ -16,7 +16,7 @@ packages:
   # (MIT). The chat's model loop is PiSwiftAgent; PiSwiftAI brings the providers and the ChatGPT login.
   PiSwift:
     url: https://github.com/xibbon/PiSwift.git
-    revision: f8696524cf41ca0a7f42f5b230eafa443daececd
+    revision: 13f157d8131c48b7ad4157f63300a6cada30f3d3 # v1.6.0
 settings:
   base:
     POKI_BUNDLE_ID: nz.zheha.poki
