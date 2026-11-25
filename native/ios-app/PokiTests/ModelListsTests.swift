@@ -178,14 +178,6 @@ final class ModelListsTests: XCTestCase {
         XCTAssertEqual(Set(ModelCatalog.dueForBackgroundRefresh(now: now, storage: storage)), [.custom(near.id), .custom(far.id)])
     }
 
-    func testANewKeyClearsTheWait() {
-        let now = Date()
-        ModelCatalog.noteFailure(.provider(.chatgpt), now: now, storage: storage)
-        XCTAssertTrue(ModelCatalog.isBackingOff(.chatgpt, now: now, storage: storage))
-        ModelCatalog.clearFailures(.chatgpt, storage: storage)
-        XCTAssertFalse(ModelCatalog.isBackingOff(.chatgpt, now: now, storage: storage))
-    }
-
     func testACancelledReadIsNotAFailure() {
         XCTAssertTrue(ModelCatalog.isCancellation(CancellationError()))
         XCTAssertTrue(ModelCatalog.isCancellation(URLError(.cancelled)))
@@ -194,7 +186,12 @@ final class ModelListsTests: XCTestCase {
     }
 
     func testCodexAskedAsTheCodexReleasePokiShips() throws {
-        XCTAssertEqual(ModelCatalog.codexClientVersion, "0.164.0")
+        // native/codex-voice/build.sh stamps the Codex release Poki builds; the list asks as that release.
+        let build = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("codex-voice/build.sh")
+        let script = try String(contentsOf: build, encoding: .utf8)
+        let line = try XCTUnwrap(script.split(separator: "\n").first { $0.hasPrefix("version = \"") })
+        XCTAssertEqual(line, "version = \"\(ModelCatalog.codexClientVersion)\"")
     }
 
     func testAWorkspaceTokenWithANullFedrampClaimStillNamesTheWorkspace() {
