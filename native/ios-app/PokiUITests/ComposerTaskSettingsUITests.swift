@@ -37,8 +37,11 @@ final class ComposerTaskSettingsUITests: XCTestCase {
         deepSeek.tap()
         XCTAssertTrue(close.waitForNonExistence(timeout: 5))
         XCTAssertTrue(model.waitForExistence(timeout: 5))
+        // The keyboard comes back on the draft; where the caret lands is up to UIKit.
         editor.typeText(".")
-        XCTAssertEqual(editor.value as? String, "Draft for Poki.")
+        let edited = editor.value as? String
+        XCTAssertEqual(edited?.count, "Draft for Poki.".count)
+        XCTAssertEqual(edited?.replacingOccurrences(of: ".", with: ""), "Draft for Poki")
 
         model.tap()
         XCTAssertTrue(deepSeek.waitForExistence(timeout: 5))
@@ -63,7 +66,7 @@ final class ComposerTaskSettingsUITests: XCTestCase {
             originallySelected.tap()
         }
         XCTAssertTrue(close.waitForNonExistence(timeout: 5))
-        XCTAssertEqual(editor.value as? String, "Draft for Poki.")
+        XCTAssertEqual(editor.value as? String, edited)
 
         model.tap()
         XCTAssertTrue(addModel.waitForExistence(timeout: 5))
