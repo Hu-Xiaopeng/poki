@@ -1,4 +1,5 @@
 import Foundation
+import PiSwiftAI
 
 /// The models each account offers the text chat: a few fast defaults per type (no-thinking models such
 /// as GPT-6.1 Terra and Claude Haiku first), plus whatever the provider's own model list returns for
@@ -9,7 +10,7 @@ enum ModelCatalog {
     static func defaults(_ provider: ModelProvider, storage: PokiStorage = .live) -> Set<String> {
         switch provider {
         case .anthropic: ["claude-haiku-5-5", "claude-sonnet-5-5"]
-        case .openai, .chatgpt: ["gpt-6.1-terra"]
+        case .openai, .chatgpt: ["gpt-6.1-terra", "gpt-6.2-sol"]
         case .deepseek: ["deepseek-flash"]
         case .gemini: ["gemini-3.8-flash"]
         case .openrouter: ["anthropic/claude-sonnet-5.5", "google/gemini-3.8-flash"]
@@ -31,14 +32,36 @@ enum ModelCatalog {
     }
 
     static func enabled(_ provider: ModelProvider, storage: PokiStorage = .live) -> Set<String> {
-        if let saved = storage.defaults.stringArray(forKey: "models.enabled.\(provider.rawValue)") { return Set(saved) }
-        return defaults(provider, storage: storage)
+        guard let saved = storage.defaults.stringArray(forKey: "models.enabled.\(provider.rawValue)") else { return defaults(provider, storage: storage) }
+        // A default added in an update (GPT-6.2 Sol) is switched on once for an owner who already chose
+        // models; one they switch off afterwards stays off.
+        guard provider != .custom else { return Set(saved) }
+        let introduced = introduced(provider, storage: storage)
+        let new = defaults(provider, storage: storage).subtracting(introduced)
+        guard !new.isEmpty else { return Set(saved) }
+        let ids = Set(saved).union(new)
+        storage.defaults.set(Array(ids), forKey: "models.enabled.\(provider.rawValue)")
+        storage.defaults.set(Array(introduced.union(new)), forKey: "models.introduced.\(provider.rawValue)")
+        return ids
+    }
+
+    /// The defaults an owner's saved choice has already seen: before this list was kept, the defaults of
+    /// Poki 0.5.0.
+    private static func introduced(_ provider: ModelProvider, storage: PokiStorage) -> Set<String> {
+        if let saved = storage.defaults.stringArray(forKey: "models.introduced.\(provider.rawValue)") { return Set(saved) }
+        switch provider {
+        case .openai, .chatgpt: return ["gpt-6.1-terra"]
+        default: return defaults(provider, storage: storage)
+        }
     }
 
     static func set(_ id: String, on: Bool, for provider: ModelProvider, notify: Bool = true, storage: PokiStorage = .live) {
         var ids = enabled(provider, storage: storage)
         if on { ids.insert(id) } else { ids.remove(id) }
         storage.defaults.set(Array(ids), forKey: "models.enabled.\(provider.rawValue)")
+        if provider != .custom {
+            storage.defaults.set(Array(introduced(provider, storage: storage).union(defaults(provider, storage: storage))), forKey: "models.introduced.\(provider.rawValue)")
+        }
         // The chat's model is always one that is switched on.
         if ModelKeys.selectedProvider(in: storage) == provider, !ids.contains(ModelKeys.selectedModel(in: storage)), let first = available(provider, storage: storage).first {
             ModelKeys.setSelectedModel(first.id, in: storage)
@@ -91,15 +114,19 @@ enum ModelCatalog {
             if let failure, count == 0 { throw failure }
             return count
         }
-        guard let request = request(provider, storage: storage) else { return 0 }
+        let request: URLRequest?
+        if provider == .chatgpt {
+            request = await ChatGPTAccount.codexAccessToken().flatMap(codexModelsRequest)
+        } else {
+            request = self.request(provider, storage: storage)
+        }
+        guard let request else { return 0 }
         let (data, response) = try await URLSession.shared.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else { throw URLError(.badServerResponse) }
         let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         let items = (json?["data"] as? [[String: Any]]) ?? (json?["models"] as? [[String: Any]]) ?? []
-        var ids = items.compactMap { ($0["id"] as? String) ?? ($0["name"] as? String) }
-            .map { $0.hasPrefix("models/") ? String($0.dropFirst(7)) : $0 }
-            .filter { usable($0, provider) }
+        var ids = listedIDs(items, provider)
         if provider == .openai {
             let voice = items.compactMap { $0["id"] as? String }.filter { $0.contains("realtime") && !$0.contains("transcribe") }.sorted()
             storage.defaults.set(voice, forKey: "models.listed.voice")
@@ -115,8 +142,62 @@ enum ModelCatalog {
         }
         ids = Array(Set(ids)).sorted { fast($0) == fast($1) ? $0 < $1 : fast($0) }
         storage.defaults.set(ids, forKey: "models.listed.\(provider.rawValue)")
+        storage.defaults.set(Date().timeIntervalSince1970, forKey: "models.listedAt.\(provider.rawValue)")
         ModelKeys.saved += 1
         return ids.count
+    }
+
+    /// The chat model ids of a provider's list. Codex's list names models by `slug` and hides some
+    /// (`visibility` "hide"); the others by `id` or, for Gemini, `name`.
+    static func listedIDs(_ items: [[String: Any]], _ provider: ModelProvider) -> [String] {
+        items.compactMap { item -> String? in
+            if let visibility = item["visibility"] as? String, visibility != "list" { return nil }
+            return (item["slug"] as? String) ?? (item["id"] as? String) ?? (item["name"] as? String)
+        }
+        .map { $0.hasPrefix("models/") ? String($0.dropFirst(7)) : $0 }
+        .filter { usable($0, provider) }
+    }
+
+    // MARK: Keeping lists current
+
+    /// How old a list may get before Poki reads it again by itself.
+    static let listLifetime: TimeInterval = 24 * 60 * 60
+
+    /// The providers whose model list Poki reads for the owner: those with a key, ChatGPT once signed in
+    /// to Codex, and custom providers with an address.
+    static func listable(storage: PokiStorage = .live) -> [ModelProvider] {
+        ModelProvider.allCases.filter { provider in
+            switch provider {
+            case .chatgpt: CodexAccount.hasStoredCredential(service: storage.codexService, home: storage.codexHome)
+            case .custom: !CustomProviders.all(in: storage).isEmpty
+            default: ModelKeys.hasKey(provider, storage: storage)
+            }
+        }
+    }
+
+    /// The list is missing or older than `listLifetime`.
+    static func isStale(_ provider: ModelProvider, now: Date = Date(), storage: PokiStorage = .live) -> Bool {
+        if provider == .custom {
+            return CustomProviders.all(in: storage).contains { custom in
+                let at = storage.defaults.double(forKey: "models.listedAt.custom.\(custom.id.uuidString)")
+                return at == 0 || now.timeIntervalSince1970 - at > listLifetime
+            }
+        }
+        let at = storage.defaults.double(forKey: "models.listedAt.\(provider.rawValue)")
+        return at == 0 || now.timeIntervalSince1970 - at > listLifetime
+    }
+
+    @MainActor private static var refreshing: Set<ModelProvider> = []
+
+    /// Reads again every list that is missing or a day old, so models a provider adds show up without a
+    /// Poki release. A failure keeps the last list; the bundled models always stay.
+    @MainActor
+    static func refreshStale(storage: PokiStorage = .live) async {
+        for provider in listable(storage: storage) where isStale(provider, storage: storage) && !refreshing.contains(provider) {
+            refreshing.insert(provider)
+            defer { refreshing.remove(provider) }
+            _ = try? await refresh(provider, storage: storage)
+        }
     }
 
     /// Reads one custom provider's model list, from its first address that answers, with its key
@@ -144,6 +225,7 @@ enum ModelCatalog {
         }
         let ids = chatIDs(raw)
         storage.defaults.set(ids, forKey: "models.listed.custom.\(id.uuidString)")
+        storage.defaults.set(Date().timeIntervalSince1970, forKey: "models.listedAt.custom.\(id.uuidString)")
         storage.defaults.set(voiceIDs(raw), forKey: "models.listed.voice.custom.\(id.uuidString)")
         ModelKeys.saved += 1
         return ids.count
@@ -160,7 +242,7 @@ enum ModelCatalog {
         let skip = ["embed", "audio", "realtime", "transcribe", "tts", "whisper", "image", "dall-e", "moderation", "search", "aqa", "imagen", "veo"]
         if skip.contains(where: lower.contains) { return false }
         switch provider {
-        case .openai: return lower.hasPrefix("gpt-") || lower.hasPrefix("o")
+        case .openai, .chatgpt: return lower.hasPrefix("gpt-") || lower.hasPrefix("o")
         case .anthropic: return lower.hasPrefix("claude")
         case .gemini: return lower.hasPrefix("gemini")
         default: return true
@@ -194,9 +276,27 @@ enum ModelCatalog {
         case .custom:
             return try? customRequest(address: ModelKeys.customURL(in: storage), key: key)
         case .chatgpt:
-            // A ChatGPT sign-in has no model list; its plan's models are the built-in ones.
+            // Read with the Codex sign-in's token (`codexModelsRequest`), which needs a refresh first.
             return nil
         }
+        request.timeoutInterval = 15
+        return request
+    }
+
+    /// The Codex client version Poki's list request names; Codex answers with the models that version
+    /// can run.
+    static let codexClientVersion = "0.162.0"
+
+    /// The ChatGPT plan's model list, as the Codex CLI reads it (sent only to chatgpt.com).
+    static func codexModelsRequest(accessToken: String) -> URLRequest? {
+        guard let account = CodexAccount.chatGPTAccountID(accessToken),
+              var parts = URLComponents(string: "https://chatgpt.com/backend-api/codex/models") else { return nil }
+        parts.queryItems = [URLQueryItem(name: "client_version", value: codexClientVersion)]
+        guard let url = parts.url else { return nil }
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue(account, forHTTPHeaderField: "chatgpt-account-id")
+        request.setValue("pi", forHTTPHeaderField: "originator")
         request.timeoutInterval = 15
         return request
     }
@@ -354,5 +454,45 @@ enum ModelCatalog {
     static var voiceModel: String {
         get { voiceModelID(for: VoiceDirect.settingsAccount) }
         set { setVoiceModelID(newValue, for: VoiceDirect.settingsAccount) }
+    }
+}
+
+/// Models newer than the pinned PiSwift catalog (f869652), set up as PiSwift's next catalog (17c490d)
+/// lists them: each copies a model the catalog has, with the same API, inputs and thinking levels (GPT-6.2
+/// rejects reasoning effort `none`, as GPT-6.1 Sol's setup already says), and changes what differs. A
+/// catalog that lists the model wins (`ModelProvider.knownModel`), so these fall away with the next bump.
+enum BundledModelSetups {
+    struct Setup: Sendable {
+        var template: String
+        var name: String
+        var cost: ModelCost?
+        /// Per pi provider, where the window differs from the template's.
+        var contextWindow: [String: Int] = [:]
+    }
+
+    static let all: [String: Setup] = [
+        // pi-ai 1.5.0 lists gpt-6.1-terra with the same API and inputs as gpt-6.1-sol.
+        "gpt-6.1-terra": Setup(template: "gpt-6.1-sol", name: "GPT-6.1 Terra"),
+        // GPT-6.2 Sol keeps GPT-6.1 Sol's prices and windows.
+        "gpt-6.2-sol": Setup(template: "gpt-6.1-sol", name: "GPT-6.2 Sol"),
+        "gpt-6.2-astra": Setup(
+            template: "gpt-6.1-sol", name: "GPT-6.2 Astra",
+            cost: ModelCost(input: 8, output: 40, cacheRead: 0.4, cacheWrite: 10,
+                            tiers: [ModelCostTier(inputTokensAbove: 272_000, input: 16, output: 60, cacheRead: 0.8, cacheWrite: 20)]),
+            contextWindow: ["openai-codex": 272_000]),
+    ]
+
+    static func apply(_ setup: Setup, id: String, provider: String, to base: Model) -> Model? {
+        copy(base, id: id, name: setup.name, cost: setup.cost, contextWindow: setup.contextWindow[provider])
+    }
+
+    /// `base` with another id and name, and the prices and window given.
+    static func copy(_ base: Model, id: String, name: String, cost: ModelCost? = nil, contextWindow: Int? = nil) -> Model? {
+        guard var json = (try? JSONSerialization.jsonObject(with: JSONEncoder().encode(base))) as? [String: Any] else { return nil }
+        json["id"] = id
+        json["name"] = name
+        if let cost, let encoded = try? JSONSerialization.jsonObject(with: JSONEncoder().encode(cost)) { json["cost"] = encoded }
+        if let contextWindow { json["contextWindow"] = contextWindow }
+        return (try? JSONSerialization.data(withJSONObject: json)).flatMap { try? JSONDecoder().decode(Model.self, from: $0) }
     }
 }
