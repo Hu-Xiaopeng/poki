@@ -1342,18 +1342,14 @@ extension ModelProvider {
 
 struct ComposerSettingsView: View {
     static let modelKey = "composer.showModelShortcut"
-    static let approvalKey = "composer.showApprovalShortcut"
 
     @AppStorage(Self.modelKey) private var showsModel = true
-    @AppStorage(Self.approvalKey) private var showsApproval = true
 
     var body: some View {
         List {
             Section("Quick Access") {
                 Toggle("Model", isOn: $showsModel)
                     .accessibilityIdentifier("composer.preference.model")
-                Toggle("Approvals", isOn: $showsApproval)
-                    .accessibilityIdentifier("composer.preference.approval")
             }
 
             Section("Preview") {

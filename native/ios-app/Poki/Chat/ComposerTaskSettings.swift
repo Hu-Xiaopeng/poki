@@ -10,19 +10,15 @@ private extension VerticalAlignment {
     static let approvalTitleCenter = VerticalAlignment(ApprovalTitleCenter.self)
 }
 
-/// The composer's shortcuts use the same settings as Poki's profile and Settings.
+/// The model button under the message opens this sheet: the models of every account set up, grouped by
+/// account, then how Poki asks before it acts. It uses the same settings as Poki's profile and Settings.
 struct ComposerTaskSettings: View {
     enum Kind: String, Identifiable {
-        case approval, model
+        case model
 
         var id: Self { self }
 
-        var title: LocalizedStringResource {
-            switch self {
-            case .approval: "Approvals"
-            case .model: "Model"
-            }
-        }
+        var title: LocalizedStringResource { "Model" }
     }
 
     struct ModelSelection: Equatable {
@@ -53,10 +49,8 @@ struct ComposerTaskSettings: View {
     var body: some View {
         NavigationStack {
             List {
-                switch kind {
-                case .approval: approvalOptions
-                case .model: modelOptions
-                }
+                modelOptions
+                approvalOptions
             }
             .onScrollGeometryChange(for: CGFloat.self) { geometry in
                 ceil(geometry.contentSize.height + geometry.contentInsets.top)
@@ -114,6 +108,8 @@ struct ComposerTaskSettings: View {
                 .accessibilityAddTraits(selected ? .isSelected : [])
                 .accessibilityIdentifier("composer.approval.\(mode.rawValue)")
             }
+        } header: {
+            Text("Approvals")
         } footer: {
             Text(ApprovalCopy.alwaysConfirm)
         }
@@ -193,6 +189,7 @@ struct ComposerTaskSettings: View {
                         } else {
                             ModelKeys.choose(provider, model: choice.id, in: storage)
                         }
+                        dismiss()
                     } label: {
                         HStack {
                             Text(verbatim: choice.name)
@@ -228,10 +225,8 @@ extension ApprovalClassifier.Mode {
                 .font(.system(size: size, weight: .medium))
                 .foregroundStyle(.secondary)
         case .confirm:
-            ComposerConfirmationButtonOutline()
-                .stroke(style: StrokeStyle(lineWidth: size / 17, lineCap: .round, lineJoin: .round))
-                .frame(width: size, height: size)
-                .scaleEffect(1.12)
+            Image(systemName: "checkmark.circle")
+                .font(.system(size: size, weight: .medium))
                 .foregroundStyle(.secondary)
         case .off:
             Image(systemName: "exclamationmark.shield")
@@ -246,67 +241,5 @@ extension ApprovalClassifier.Mode {
         case .confirm: "Tap Allow or Don’t Allow in the Live Activity, a notification, or Poki."
         case .off: "Optional steps run automatically without asking."
         }
-    }
-}
-
-/// Front view of the brain, with two lobes and a single centre seam.
-struct ComposerBrainOutline: Shape {
-    func path(in rect: CGRect) -> Path {
-        func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
-            CGPoint(x: rect.minX + x * rect.width / 24, y: rect.minY + y * rect.height / 24)
-        }
-
-        var outline = Path()
-        outline.move(to: point(12, 3.2))
-        outline.addCurve(to: point(4.9, 5.6), control1: point(8.9, 0.4), control2: point(5.5, 1.7))
-        outline.addCurve(to: point(3, 10), control1: point(2, 6.1), control2: point(1.2, 8))
-        outline.addCurve(to: point(4.6, 18.9), control1: point(1, 12.7), control2: point(1.5, 17.4))
-        outline.addCurve(to: point(12, 20.6), control1: point(5.4, 22.6), control2: point(10.2, 23.3))
-        outline.addCurve(to: point(19.3, 18.8), control1: point(14.3, 23.2), control2: point(18.7, 22.3))
-        outline.addCurve(to: point(21, 10), control1: point(22.5, 17.2), control2: point(22.9, 12.8))
-        outline.addCurve(to: point(19, 5.3), control1: point(22.8, 8), control2: point(21.6, 6.1))
-        outline.addCurve(to: point(12, 3.2), control1: point(18.4, 1.8), control2: point(15.2, 0.9))
-        outline.closeSubpath()
-
-        outline.move(to: point(12, 3.2))
-        outline.addLine(to: point(12, 20.6))
-        outline.move(to: point(3, 10))
-        outline.addQuadCurve(to: point(6, 9.4), control: point(4.8, 10.8))
-        outline.move(to: point(12, 15.4))
-        outline.addQuadCurve(to: point(8.8, 15), control: point(10.5, 16.1))
-        outline.move(to: point(19, 5.3))
-        outline.addQuadCurve(to: point(16.7, 8.4), control: point(19, 7.4))
-        outline.move(to: point(12, 11.8))
-        outline.addLine(to: point(14.5, 11.8))
-        return outline
-    }
-}
-
-
-/// A rounded push cap raised above its wider circular base.
-private struct ComposerConfirmationButtonOutline: Shape {
-    func path(in rect: CGRect) -> Path {
-        let unit = min(rect.width, rect.height) / 24
-        func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
-            CGPoint(x: rect.midX + (x - 12) * unit, y: rect.midY + (y - 12) * unit)
-        }
-
-        let face = CGRect(origin: point(4.6, 3.2), size: CGSize(width: 14.8 * unit, height: 9.4 * unit))
-        var outline = Path(ellipseIn: face)
-        outline.move(to: point(4.6, 7.9))
-        outline.addLine(to: point(4.6, 15.3))
-        outline.addCurve(to: point(12, 18.6), control1: point(4.6, 17.1), control2: point(8.1, 18.6))
-        outline.addCurve(to: point(19.4, 15.3), control1: point(15.9, 18.6), control2: point(19.4, 17.1))
-        outline.addLine(to: point(19.4, 7.9))
-
-        // Only the exposed part of the base is visible around the cap.
-        outline.move(to: point(4.6, 13.9))
-        outline.addCurve(to: point(12, 22), control1: point(-2.2, 16.6), control2: point(1.6, 22))
-        outline.addCurve(to: point(19.4, 13.9), control1: point(22.4, 22), control2: point(26.2, 16.6))
-
-        outline.move(to: point(9.6, 8))
-        outline.addLine(to: point(11.2, 9.3))
-        outline.addLine(to: point(14.6, 6.5))
-        return outline
     }
 }

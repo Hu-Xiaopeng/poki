@@ -213,7 +213,7 @@ final class InterfaceSizeTests: XCTestCase {
 
     func testHiddenComposerShortcutsSurviveSettingsVaultRestoration() throws {
         let defaults = UserDefaults.standard
-        let keys = [ComposerSettingsView.modelKey, ComposerSettingsView.approvalKey]
+        let keys = [ComposerSettingsView.modelKey]
         let originals = keys.map { defaults.object(forKey: $0) }
         let backup = try Keychain.read("settings.v1")
         defer {

@@ -109,8 +109,6 @@ final class LanguageTests: XCTestCase {
             }), "Input Field", "输入框", "輸入框"),
             (AnyView(ComposerTaskSettings(kind: .model, approvalIconSize: 22, previewSelection: .constant(nil),
                                          openModelSetup: {})), "Model", "模型", "模型"),
-            (AnyView(ComposerTaskSettings(kind: .approval, approvalIconSize: 22, previewSelection: .constant(nil),
-                                         openModelSetup: {})), "Approvals", "操作确认", "操作確認"),
         ]
 
         for (screen, english, simplified, traditional) in cases {

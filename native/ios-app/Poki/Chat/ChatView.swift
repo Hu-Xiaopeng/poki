@@ -1355,7 +1355,6 @@ struct ComposerInputView: View {
     var running: Bool
     var isSettingsPreview = false
     @AppStorage(ComposerSettingsView.modelKey) private var showsModelShortcut = true
-    @AppStorage(ComposerSettingsView.approvalKey) private var showsApprovalShortcut = true
     @State private var previewTaps = 0
     /// How far the running task is, 0 to 1, for the ring around Stop; nil when unknown.
     var progress: Double? = nil
@@ -1412,20 +1411,19 @@ struct ComposerInputView: View {
     @State private var recentAppsVersion = 0
     /// A swipe down that started on a message scrolled away from its first line: it scrolls the message.
     @State private var swipeScrolls: Bool?
+    @Environment(\.colorScheme) private var scheme
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Bumped when the chosen model changes, so the model button shows the new name.
+    @State private var modelVersion = 0
     @ScaledMetric(relativeTo: .body) private var scaledButtonDiameter = 44.0
     @ScaledMetric(relativeTo: .body) private var scaledControlInset = 6.0
     @ScaledMetric(relativeTo: .body) private var scaledControlSpacing = 8.0
     @ScaledMetric(relativeTo: .body) private var fieldHeight = 112.0
 
     private var buttonDiameter: CGFloat { min(56, max(36, scaledButtonDiameter)) }
-    private var shortcutHitSide: CGFloat {
-        let available = composerWidth - 2 * controlInset - 3 * buttonHitSide - 4
-        return max(44, min(buttonHitSide, available / 2))
-    }
-    private var shortcutGlyphSide: CGFloat { shortcutHitSide / 2 }
-    private var compactButtonDiameter: CGFloat { buttonDiameter * 0.87 }
+    /// The approval icons in the model sheet, as large as the composer's glyphs.
+    private var shortcutGlyphSide: CGFloat { buttonHitSide / 2 }
     private var buttonHitSide: CGFloat { max(44, buttonDiameter) }
     private var controlInset: CGFloat { min(8, max(4, scaledControlInset)) }
     private var controlSpacing: CGFloat { min(12, max(6, scaledControlSpacing)) }
@@ -1435,7 +1433,7 @@ struct ComposerInputView: View {
     }
     private var shortcutsVisible: Bool { focused || taskSettings != nil || resumeEditing }
     private var expanded: Bool {
-        isSettingsPreview || (shortcutsVisible && (showsModelShortcut || showsApprovalShortcut)) || typeSize >= .xxxLarge
+        isSettingsPreview || (shortcutsVisible && showsModelShortcut) || typeSize >= .xxxLarge
     }
     private var expansionAnimation: Animation? { reduceMotion ? nil : .smooth(duration: 0.28) }
 
@@ -1466,7 +1464,7 @@ struct ComposerInputView: View {
                 MentionPicker(
                     state: mentionState,
                     composerWidth: composerWidth,
-                    caretX: mentionCaretX.map { $0 + 8 + controlInset },
+                    caretX: mentionCaretX.map { $0 + mentionFieldInset + controlInset },
                     pick: { pickApp($0, replacing: mentionState.triggerLength, keepFocus: true) },
                     browseAll: {
                         pendingMentionReplaceLength = mentionState.triggerLength
@@ -1537,16 +1535,8 @@ struct ComposerInputView: View {
                             mainButton
                         }
                         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-                        taskShortcut(.approval, value: model.approvalMode.title) {
-                            model.approvalMode.composerIcon(size: shortcutGlyphSide)
-                        }
-                        taskShortcut(.model) {
-                            ComposerBrainOutline()
-                                .stroke(style: StrokeStyle(lineWidth: shortcutGlyphSide / 14, lineCap: .round, lineJoin: .round))
-                                .frame(width: shortcutGlyphSide, height: shortcutGlyphSide)
-                                .foregroundStyle(Color(.label))
-                        }
-                        .disabled(running)
+                        modelButton
+                            .disabled(running)
                     }
                     .simultaneousGesture(swipe)
                     .transition(.blurReplace)
@@ -1752,13 +1742,9 @@ struct ComposerInputView: View {
     /// until you tap Send.
     private var dictating: some View {
         Button { dictation.stop(model) } label: {
-            microphoneGlyph
-                .foregroundStyle(Tint.red)
-                .phaseAnimator([false, true]) { glyph, dimmed in
-                    glyph.opacity(dimmed && !reduceMotion ? 0.6 : 1)
-                } animation: { _ in
-                    reduceMotion ? nil : .easeInOut(duration: 0.65)
-                }
+            Image(systemName: "mic.fill")
+                .font(.body.weight(.medium)).foregroundStyle(Tint.red)
+                .symbolEffect(.pulse, isActive: !reduceMotion)
                 .frame(width: buttonHitSide, height: buttonHitSide).contentShape(.rect)
         }
         .buttonStyle(.plain)
@@ -1775,8 +1761,8 @@ struct ComposerInputView: View {
             guard !isSettingsPreview else { previewTaps += 1; return }
             dictation.start(model, after: input)
         } label: {
-            microphoneGlyph
-                .foregroundStyle(Color(.label))
+            Image(systemName: "mic")
+                .font(.body.weight(.medium)).foregroundStyle(Color(.label))
                 .frame(width: buttonHitSide, height: buttonHitSide).contentShape(.rect)
         }
         .buttonStyle(.plain)
@@ -1788,37 +1774,52 @@ struct ComposerInputView: View {
         }
     }
 
-    private var microphoneGlyph: some View {
-        let side = shortcutGlyphSide + 2
-        return ComposerMicrophoneOutline()
-            .stroke(style: StrokeStyle(lineWidth: side / 14, lineCap: .round, lineJoin: .round))
-            .frame(width: side, height: side)
-    }
+    /// Where the message's text starts inside the glass: after plus on one row, near the edge on two.
+    private var mentionFieldInset: CGFloat { expanded ? 8 : buttonHitSide + controlSpacing }
 
-    private func taskShortcut<Icon: View>(_ kind: ComposerTaskSettings.Kind, value: String = "",
-                                          @ViewBuilder icon: () -> Icon) -> some View {
-        let enabled = kind == .model ? showsModelShortcut : showsApprovalShortcut
-        let visible = enabled && (isSettingsPreview || shortcutsVisible)
+    /// The model that answers, as a button under the message while you write (as in the ChatGPT and
+    /// Claude apps): it opens the models, with how Poki asks before it acts below them.
+    private var modelButton: some View {
+        let _ = modelVersion
+        let visible = showsModelShortcut && (isSettingsPreview || shortcutsVisible)
+        let hasModel = isSettingsPreview || ModelKeys.hasUsableKey(in: model.storage)
+        let name = isSettingsPreview || !hasModel ? nil : ModelKeys.selectedModelName(in: model.storage)
         return Button {
             guard !isSettingsPreview else { previewTaps += 1; return }
             settingsPresented = true
             resumeEditing = focused
-            taskSettings = kind
+            taskSettings = .model
             adding = false
             focused = false
         } label: {
-            icon()
-                .frame(width: shortcutHitSide, height: shortcutHitSide)
-                .contentShape(.interaction, Rectangle())
+            HStack(spacing: 5) {
+                Group {
+                    if let name { Text(verbatim: name) } else if hasModel { Text("Model") } else { Text("Add Model") }
+                }
+                .foregroundStyle(Color(.label))
+                .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+            }
+            .font(.subheadline.weight(.medium))
+            .padding(.horizontal, 14)
+            .frame(height: buttonDiameter)
+            .background(Color(.label).opacity(scheme == .dark ? 0.16 : 0.12), in: .capsule)
+            .frame(height: buttonHitSide)
+            .contentShape(.interaction, Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(Text(verbatim: AppLocalization.text(kind.title)))
-        .accessibilityValue(value)
-        .accessibilityIdentifier("\(controlIdentifierPrefix).settings.\(kind.rawValue)")
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+        .accessibilityLabel(Text("Model"))
+        .accessibilityValue(name.map { Text(verbatim: $0) } ?? Text(verbatim: ""))
+        .accessibilityIdentifier("\(controlIdentifierPrefix).settings.model")
         .accessibilityHidden(!visible)
         .allowsHitTesting(visible && taskSettings == nil)
         .modifier(ComposerShortcutReveal(progress: visible ? 1 : 0))
         .animation(expansionAnimation, value: visible)
+        .onReceive(NotificationCenter.default.publisher(for: ModelKeys.changed)) { _ in modelVersion += 1 }
     }
 
     private func finishTaskSettings() {
@@ -1846,9 +1847,10 @@ struct ComposerInputView: View {
             withAnimation(reduceMotion ? nil : .snappy(duration: 0.26)) { adding.toggle() }
         } label: {
             Image(systemName: "plus")
-                .font(.system(size: shortcutGlyphSide * 1.025, weight: .medium)).dynamicTypeSize(...DynamicTypeSize.xxxLarge).foregroundStyle(Color(.label))
+                .font(.title3.weight(.medium)).dynamicTypeSize(...DynamicTypeSize.xxxLarge).foregroundStyle(Color(.label))
                 .rotationEffect(.degrees(adding ? 45 : 0))
-                .frame(width: compactButtonDiameter, height: compactButtonDiameter)
+                .frame(width: buttonDiameter, height: buttonDiameter)
+                .background(Color(.label).opacity(scheme == .dark ? 0.16 : 0.12), in: .circle)
                 .frame(width: buttonHitSide, height: buttonHitSide)
                 .contentShape(.interaction, Rectangle())
         }
@@ -1948,19 +1950,17 @@ struct ComposerInputView: View {
     /// blue while it is yours to press for Poki; ink while it stops a task, with the task's progress
     /// as a ring around it.
     private var mainButton: some View {
-        let talking = !running && !canSend
-        let diameter = talking ? compactButtonDiameter : buttonDiameter
-        return Button {
+        Button {
             guard !isSettingsPreview else { previewTaps += 1; return }
             // On an empty field: Talk with Poki at once. Dictation has its own
             // button beside this one. Without a voice key `openVoice` has the field say so.
             if running { stop() } else if canSend { submit() } else { dictation.stop(model); openVoice() }
         } label: {
             Image(systemName: running ? "stop.fill" : canSend ? "arrow.up" : "waveform")
-                .font(talking ? .system(size: diameter * 0.42, weight: .semibold) : .body.weight(.semibold))
+                .font(.body.weight(.semibold))
                 .contentTransition(.symbolEffect(.replace))
                 .foregroundStyle(running ? Tint.onSolid : .white)
-                .frame(width: diameter, height: diameter)
+                .frame(width: buttonDiameter, height: buttonDiameter)
                 .background(running ? Tint.solid : Tint.blue, in: .circle)
                 .overlay {
                     if running {

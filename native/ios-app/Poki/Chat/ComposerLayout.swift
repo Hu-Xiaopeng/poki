@@ -25,12 +25,14 @@ struct ComposerLayout: Layout {
                           anchor: .bottomLeading, proposal: ProposedViewSize(sizes.field))
         subviews[2].place(at: CGPoint(x: bounds.maxX, y: bottom), anchor: .bottomTrailing,
                           proposal: ProposedViewSize(sizes.trailing))
-        // Keep shortcut widths out of the compact editor measurement so the editor can
-        // interpolate smoothly on focus, even on widths that could not fit all five views inline.
-        subviews[3].place(at: CGPoint(x: bounds.minX + sizes.leading.width, y: bottom), anchor: .bottomLeading,
-                          proposal: .unspecified)
-        subviews[4].place(at: CGPoint(x: bounds.maxX - sizes.trailing.width, y: bottom), anchor: .bottomTrailing,
-                          proposal: .unspecified)
+        // The model button sits between plus and the voice buttons on the bottom row. Its width stays out
+        // of the compact editor measurement so the editor interpolates smoothly on focus, and a long
+        // model name is truncated to the room between them.
+        if subviews.count > 3 {
+            let room = max(0, bounds.width - sizes.leading.width - sizes.trailing.width - 2 * spacing)
+            subviews[3].place(at: CGPoint(x: bounds.minX + sizes.leading.width + spacing, y: bottom), anchor: .bottomLeading,
+                              proposal: ProposedViewSize(width: room, height: nil))
+        }
     }
 
     private func measure(width: CGFloat, subviews: Subviews)
@@ -67,23 +69,3 @@ struct ComposerShortcutReveal: ViewModifier, Animatable {
     }
 }
 
-
-/// The microphone capsule and its yoke, with a short stem and no horizontal foot.
-struct ComposerMicrophoneOutline: Shape {
-    func path(in rect: CGRect) -> Path {
-        func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
-            CGPoint(x: rect.minX + rect.width * x / 24, y: rect.minY + rect.height * y / 24)
-        }
-
-        let capsule = CGRect(origin: point(8.4, 1.8), size: CGSize(width: rect.width * 0.3, height: rect.height * 0.55))
-        var outline = Path(roundedRect: capsule, cornerRadius: capsule.width / 2)
-        outline.move(to: point(4.8, 10.7))
-        outline.addLine(to: point(4.8, 12))
-        outline.addQuadCurve(to: point(12, 19.2), control: point(4.8, 19.2))
-        outline.addQuadCurve(to: point(19.2, 12), control: point(19.2, 19.2))
-        outline.addLine(to: point(19.2, 10.7))
-        outline.move(to: point(12, 19.2))
-        outline.addLine(to: point(12, 22.2))
-        return outline
-    }
-}
