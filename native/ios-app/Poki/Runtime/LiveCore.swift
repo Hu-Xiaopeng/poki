@@ -64,6 +64,8 @@ final class LiveCore: CoreSession {
         await core.clearTap(on: text, inApp: bundleID, named: name, waiting: seconds)
     }
     func accessChanged() { core.accessChanged() }
+    /// Poki came to the front: a relay connection that no longer answers is dialled again.
+    func checkRelay() { core.checkRelay() }
     /// The app's own MCP tools (ask_poki), after look, do and status.
     func setHostTools(_ tools: [HostTool]) { core.setHostTools(tools) }
     func saveTaskMemories(_ writes: [TaskMemoryWrite], conversation: String, task: String) -> [Int] {
