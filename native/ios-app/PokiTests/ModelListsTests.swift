@@ -114,6 +114,8 @@ final class ModelListsTests: XCTestCase {
         let astra = try XCTUnwrap(ModelProvider.openrouter.piModel("openai/gpt-6.2-astra", storage: storage))
         XCTAssertEqual(astra.name, "GPT-6.2 Astra")
         XCTAssertEqual(astra.cost.output, 40)
+        // GPT-6.1 Terra behind OpenRouter keeps the plain setup (ConnectionCheckTests).
+        XCTAssertNil(ModelProvider.knownModel(provider: "openrouter", id: "openai/gpt-6.1-terra"))
     }
 
     @MainActor

@@ -515,18 +515,21 @@ enum BundledModelSetups {
         var cost: ModelCost?
         /// Per pi provider, where the window differs from the template's.
         var contextWindow: [String: Int] = [:]
+        /// Also set up behind a gateway (`openai/<id>` on OpenRouter). GPT-6.1 Terra is not: OpenRouter
+        /// rejects the thinking Sol's setup would send it, so it keeps the plain unlisted setup.
+        var onGateways = false
     }
 
     static let all: [String: Setup] = [
         // pi-ai 1.5.0 lists gpt-6.1-terra with the same API and inputs as gpt-6.1-sol.
         "gpt-6.1-terra": Setup(template: "gpt-6.1-sol", name: "GPT-6.1 Terra"),
         // GPT-6.2 Sol keeps GPT-6.1 Sol's prices and windows.
-        "gpt-6.2-sol": Setup(template: "gpt-6.1-sol", name: "GPT-6.2 Sol"),
+        "gpt-6.2-sol": Setup(template: "gpt-6.1-sol", name: "GPT-6.2 Sol", onGateways: true),
         "gpt-6.2-astra": Setup(
             template: "gpt-6.1-sol", name: "GPT-6.2 Astra",
             cost: ModelCost(input: 8, output: 40, cacheRead: 0.4, cacheWrite: 10,
                             tiers: [ModelCostTier(inputTokensAbove: 272_000, input: 16, output: 60, cacheRead: 0.8, cacheWrite: 20)]),
-            contextWindow: ["openai-codex": 272_000]),
+            contextWindow: ["openai-codex": 272_000], onGateways: true),
     ]
 
     static func apply(_ setup: Setup, id: String, provider: String, to base: Model) -> Model? {

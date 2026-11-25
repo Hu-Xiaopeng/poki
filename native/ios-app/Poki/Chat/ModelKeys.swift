@@ -214,7 +214,7 @@ enum ModelProvider: String, CaseIterable, Identifiable, Sendable {
         // template is the gateway's entry for the template model (`openai/gpt-6.1-sol`).
         let parts = id.split(separator: "/", maxSplits: 1).map(String.init)
         let vendor = parts.count == 2 ? parts[0] + "/" : ""
-        guard let setup = BundledModelSetups.all[parts.last ?? id],
+        guard let setup = BundledModelSetups.all[parts.last ?? id], vendor.isEmpty || setup.onGateways,
               let base = getModel(provider: provider, modelId: vendor + setup.template) else { return nil }
         return BundledModelSetups.apply(setup, id: id, provider: provider, to: base)
     }
