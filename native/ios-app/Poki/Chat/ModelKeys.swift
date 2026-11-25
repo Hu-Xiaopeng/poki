@@ -210,7 +210,12 @@ enum ModelProvider: String, CaseIterable, Identifiable, Sendable {
     /// catalog lists the model, the catalog's entry wins.
     static func knownModel(provider: String, id: String) -> Model? {
         if let model = getModel(provider: provider, modelId: id) { return model }
-        guard let setup = BundledModelSetups.all[id], let base = getModel(provider: provider, modelId: setup.template) else { return nil }
+        // A gateway names a vendor's model with the vendor first (OpenRouter's `openai/gpt-6.2-sol`); its
+        // template is the gateway's entry for the template model (`openai/gpt-6.1-sol`).
+        let parts = id.split(separator: "/", maxSplits: 1).map(String.init)
+        let vendor = parts.count == 2 ? parts[0] + "/" : ""
+        guard let setup = BundledModelSetups.all[parts.last ?? id],
+              let base = getModel(provider: provider, modelId: vendor + setup.template) else { return nil }
         return BundledModelSetups.apply(setup, id: id, provider: provider, to: base)
     }
 

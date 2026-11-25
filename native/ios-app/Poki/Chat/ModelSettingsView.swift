@@ -365,7 +365,7 @@ struct TextChatFeature: View {
         .task {
             // A list that is missing or a day old is read again, so the provider's new models show up.
             let empty = custom.map { ModelCatalog.listedCustom($0).isEmpty } ?? ModelCatalog.listed(provider).isEmpty
-            if lists, empty || ModelCatalog.isStale(provider) { refresh() }
+            if lists, empty || ModelCatalog.isStale(provider) && !ModelCatalog.isBackingOff(provider) { refresh() }
         }
     }
 

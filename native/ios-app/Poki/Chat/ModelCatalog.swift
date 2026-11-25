@@ -120,13 +120,22 @@ enum ModelCatalog {
         } else {
             request = self.request(provider, storage: storage)
         }
-        guard let request else { return 0 }
+        guard let request else { throw DiscoveryError.authentication }
         let (data, response) = try await URLSession.shared.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else { throw URLError(.badServerResponse) }
-        let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-        let items = (json?["data"] as? [[String: Any]]) ?? (json?["models"] as? [[String: Any]]) ?? []
+        return try store(data, for: provider, storage: storage)
+    }
+
+    /// Keeps a provider's model list. A body that is not a list (a captive portal's page, an error
+    /// object) or a list with no chat models throws and keeps the last list and its age, so it is read
+    /// again soon rather than in a day.
+    @MainActor
+    static func store(_ data: Data, for provider: ModelProvider, storage: PokiStorage = .live) throws -> Int {
+        guard let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let items = (json["data"] ?? json["models"]) as? [[String: Any]] else { throw DiscoveryError.malformed }
         var ids = listedIDs(items, provider)
+        guard !ids.isEmpty else { throw DiscoveryError.malformed }
         if provider == .openai {
             let voice = items.compactMap { $0["id"] as? String }.filter { $0.contains("realtime") && !$0.contains("transcribe") }.sorted()
             storage.defaults.set(voice, forKey: "models.listed.voice")
@@ -143,6 +152,8 @@ enum ModelCatalog {
         ids = Array(Set(ids)).sorted { fast($0) == fast($1) ? $0 < $1 : fast($0) }
         storage.defaults.set(ids, forKey: "models.listed.\(provider.rawValue)")
         storage.defaults.set(Date().timeIntervalSince1970, forKey: "models.listedAt.\(provider.rawValue)")
+        storage.defaults.removeObject(forKey: "models.failures.\(provider.rawValue)")
+        storage.defaults.removeObject(forKey: "models.failedAt.\(provider.rawValue)")
         ModelKeys.saved += 1
         return ids.count
     }
@@ -187,16 +198,52 @@ enum ModelCatalog {
         return at == 0 || now.timeIntervalSince1970 - at > listLifetime
     }
 
+    /// After a failed background read, how long Poki waits before trying again by itself: an hour, then
+    /// twice as long after each further failure, up to a day. Refresh Model List always reads at once.
+    static func backoff(failures: Int) -> TimeInterval {
+        guard failures > 0 else { return 0 }
+        return min(60 * 60 * pow(2, Double(min(failures, 16) - 1)), listLifetime)
+    }
+
+    /// A background read failed a short while ago (offline, a refused key, a sign-in to renew).
+    static func isBackingOff(_ provider: ModelProvider, now: Date = Date(), storage: PokiStorage = .live) -> Bool {
+        let failures = storage.defaults.integer(forKey: "models.failures.\(provider.rawValue)")
+        let at = storage.defaults.double(forKey: "models.failedAt.\(provider.rawValue)")
+        return failures > 0 && now.timeIntervalSince1970 - at < backoff(failures: failures)
+    }
+
+    static func noteFailure(_ provider: ModelProvider, now: Date = Date(), storage: PokiStorage = .live) {
+        let key = "models.failures.\(provider.rawValue)"
+        storage.defaults.set(storage.defaults.integer(forKey: key) + 1, forKey: key)
+        storage.defaults.set(now.timeIntervalSince1970, forKey: "models.failedAt.\(provider.rawValue)")
+    }
+
+    static func clearFailures(_ provider: ModelProvider, storage: PokiStorage = .live) {
+        storage.defaults.removeObject(forKey: "models.failures.\(provider.rawValue)")
+        storage.defaults.removeObject(forKey: "models.failedAt.\(provider.rawValue)")
+    }
+
     @MainActor private static var refreshing: Set<ModelProvider> = []
 
+    /// The lists `refreshStale` reads now: missing or a day old, and not backing off after a failure.
+    static func dueForBackgroundRefresh(now: Date = Date(), storage: PokiStorage = .live) -> [ModelProvider] {
+        listable(storage: storage).filter { isStale($0, now: now, storage: storage) && !isBackingOff($0, now: now, storage: storage) }
+    }
+
     /// Reads again every list that is missing or a day old, so models a provider adds show up without a
-    /// Poki release. A failure keeps the last list; the bundled models always stay.
+    /// Poki release. A failure keeps the last list (the bundled models always stay) and backs off.
     @MainActor
     static func refreshStale(storage: PokiStorage = .live) async {
-        for provider in listable(storage: storage) where isStale(provider, storage: storage) && !refreshing.contains(provider) {
+        for provider in dueForBackgroundRefresh(storage: storage) where !refreshing.contains(provider) {
             refreshing.insert(provider)
             defer { refreshing.remove(provider) }
-            _ = try? await refresh(provider, storage: storage)
+            do {
+                _ = try await refresh(provider, storage: storage)
+                clearFailures(provider, storage: storage)
+            } catch is CancellationError {
+            } catch {
+                noteFailure(provider, storage: storage)
+            }
         }
     }
 

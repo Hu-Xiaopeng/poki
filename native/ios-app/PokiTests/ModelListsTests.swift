@@ -103,6 +103,51 @@ final class ModelListsTests: XCTestCase {
         XCTAssertTrue(ModelCatalog.isStale(.openai, now: now, storage: storage))
     }
 
+    func testOpenRouterGPT62TakesTheGatewaysSetupNotThePlainOne() throws {
+        let sol = try XCTUnwrap(ModelProvider.openrouter.piModel("openai/gpt-6.2-sol", storage: storage))
+        XCTAssertEqual(sol.id, "openai/gpt-6.2-sol")
+        XCTAssertTrue(sol.reasoning)
+        XCTAssertEqual(sol.contextWindow, 1_050_000)
+        XCTAssertEqual(sol.maxTokens, 128_000)
+        XCTAssertEqual(sol.cost.input, 2)
+        XCTAssertNotNil(sol.compat)
+        let astra = try XCTUnwrap(ModelProvider.openrouter.piModel("openai/gpt-6.2-astra", storage: storage))
+        XCTAssertEqual(astra.name, "GPT-6.2 Astra")
+        XCTAssertEqual(astra.cost.output, 40)
+    }
+
+    @MainActor
+    func testAPageThatIsNotAListKeepsTheLastListAndItsAge() throws {
+        XCTAssertEqual(try ModelCatalog.store(Data(#"{"data":[{"id":"gpt-6.2-sol"},{"id":"gpt-realtime-2.1"}]}"#.utf8), for: .openai, storage: storage), 1)
+        let listedAt = storage.defaults.double(forKey: "models.listedAt.openai")
+        XCTAssertGreaterThan(listedAt, 0)
+
+        for body in ["<html>Sign in to the Wi-Fi</html>", #"{"models":[]}"#, #"{"error":{"message":"nope"}}"#, #"{"data":[{"id":"text-embedding-4"}]}"#] {
+            XCTAssertThrowsError(try ModelCatalog.store(Data(body.utf8), for: .openai, storage: storage), body)
+            XCTAssertEqual(storage.defaults.stringArray(forKey: "models.listed.openai"), ["gpt-6.2-sol"], body)
+            XCTAssertEqual(storage.defaults.stringArray(forKey: "models.listed.voice"), ["gpt-realtime-2.1"], body)
+            XCTAssertEqual(storage.defaults.double(forKey: "models.listedAt.openai"), listedAt, body)
+        }
+    }
+
+    func testFailedBackgroundReadsBackOffUpToADay() throws {
+        try ModelKeys.save("sk-test", for: .openai, storage: storage)
+        let now = Date()
+        XCTAssertEqual(ModelCatalog.dueForBackgroundRefresh(now: now, storage: storage), [.openai])
+
+        ModelCatalog.noteFailure(.openai, now: now, storage: storage)
+        XCTAssertEqual(ModelCatalog.dueForBackgroundRefresh(now: now.addingTimeInterval(59 * 60), storage: storage), [])
+        XCTAssertEqual(ModelCatalog.dueForBackgroundRefresh(now: now.addingTimeInterval(61 * 60), storage: storage), [.openai])
+
+        ModelCatalog.noteFailure(.openai, now: now, storage: storage)
+        XCTAssertTrue(ModelCatalog.isBackingOff(.openai, now: now.addingTimeInterval(119 * 60), storage: storage))
+        XCTAssertFalse(ModelCatalog.isBackingOff(.openai, now: now.addingTimeInterval(121 * 60), storage: storage))
+        XCTAssertEqual(ModelCatalog.backoff(failures: 40), ModelCatalog.listLifetime)
+
+        ModelCatalog.clearFailures(.openai, storage: storage)
+        XCTAssertFalse(ModelCatalog.isBackingOff(.openai, now: now, storage: storage))
+    }
+
     private static func jwt(_ claims: [String: Any]) -> String {
         func part(_ object: Any) -> String {
             let data = try! JSONSerialization.data(withJSONObject: object)
