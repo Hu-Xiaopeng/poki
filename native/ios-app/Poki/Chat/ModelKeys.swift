@@ -149,7 +149,8 @@ enum ModelProvider: String, CaseIterable, Identifiable, Sendable {
             let model = provider.model.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !model.isEmpty, provider.primary != nil else { return nil }
             return ChatModelChoice(id: CustomProviders.choiceID(provider.id, model),
-                                   name: CustomProviders.choiceName(provider, model, among: providers.count))
+                                   name: CustomProviders.choiceName(provider, model, among: providers.count),
+                                   shortName: model)
         }
     }
 
@@ -259,6 +260,66 @@ enum ModelProvider: String, CaseIterable, Identifiable, Sendable {
 struct ChatModelChoice: Hashable, Identifiable, Sendable {
     var id: String
     var name: String
+    var shortName: String
+
+    init(id: String, name: String, shortName: String? = nil) {
+        self.id = id
+        self.name = name
+        self.shortName = shortName ?? Self.stripProviderPrefix(from: name)
+    }
+
+    static func stripProviderPrefix(from rawName: String) -> String {
+        var value = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return rawName }
+
+        let openRouterSuffix = " (OpenRouter)"
+        if value.hasSuffix(openRouterSuffix) {
+            let stripped = String(value.dropLast(openRouterSuffix.count)).trimmingCharacters(in: .whitespaces)
+            if !stripped.isEmpty { value = stripped }
+        }
+
+        let gatewayVendors = ["openai/", "anthropic/", "google/", "deepseek/"]
+        for vendor in gatewayVendors {
+            if value.lowercased().hasPrefix(vendor) {
+                let stripped = String(value.dropFirst(vendor.count))
+                if !stripped.isEmpty {
+                    value = stripped
+                    break
+                }
+            }
+        }
+
+        let prefixes = [
+            "chatgpt ",
+            "openai ",
+            "anthropic ",
+            "google ",
+            "gpt-",
+            "gpt ",
+            "claude ",
+            "claude-",
+            "gemini ",
+            "gemini-",
+            "deepseek ",
+            "deepseek-",
+        ]
+        var changed = true
+        while changed {
+            changed = false
+            let lower = value.lowercased()
+            for prefix in prefixes {
+                if lower.hasPrefix(prefix) {
+                    let stripped = String(value.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
+                    if !stripped.isEmpty {
+                        value = stripped
+                        changed = true
+                        break
+                    }
+                }
+            }
+        }
+        return value
+    }
 }
 
 /// The owner's keys and the ChatGPT sign-in, in this iPhone's keychain (the relay key's service, one
@@ -479,6 +540,20 @@ enum ModelKeys {
         let provider = selectedProvider(in: storage)
         let model = selectedModel(in: storage)
         return ModelCatalog.all(provider, storage: storage).first { $0.id == model }?.name ?? model
+    }
+
+    static var selectedShortModelName: String { selectedShortModelName(in: .live) }
+
+    static func selectedShortModelName(in storage: PokiStorage = .live) -> String {
+        let provider = selectedProvider(in: storage)
+        let model = selectedModel(in: storage)
+        if let choice = ModelCatalog.all(provider, storage: storage).first(where: { $0.id == model }) {
+            return choice.shortName
+        }
+        if provider == .custom, let parsed = CustomProviders.parse(model) {
+            return parsed.model
+        }
+        return ChatModelChoice.stripProviderPrefix(from: model)
     }
 
     /// Bumped on every change, so views that read keys can redraw; `changed` is posted too (ask_poki is

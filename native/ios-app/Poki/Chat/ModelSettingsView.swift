@@ -100,7 +100,7 @@ private struct InUseCard: View {
             heading {
                 if has { ProviderTile(provider: provider, size: 44) } else { SettingsIcon(symbol: "sparkles", warns: true, size: 44) }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(verbatim: has ? ModelKeys.selectedModelName : AppLocalization.text(LocalizedStringResource("No Account")))
+                    Text(verbatim: has ? ModelKeys.selectedShortModelName : AppLocalization.text(LocalizedStringResource("No Account")))
                         .font(.title3.weight(.semibold)).foregroundStyle(Color(.label))
                     if has { Text(verbatim: ModelKeys.selectedAccountName).font(.subheadline).foregroundStyle(Color(.secondaryLabel)) }
                 }
@@ -251,7 +251,7 @@ private struct AccountDetail: View {
             Section {
                 NavigationLink { TextChatFeature(provider: provider) } label: {
                     LabeledContent {
-                        Text(ModelKeys.selectedProvider == provider ? ModelKeys.selectedModelName : ModelAccounts.canChat(provider) ? AppLocalization.text(LocalizedStringResource("Off")) : AppLocalization.text(LocalizedStringResource("Not Supported")))
+                        Text(ModelKeys.selectedProvider == provider ? ModelKeys.selectedShortModelName : ModelAccounts.canChat(provider) ? AppLocalization.text(LocalizedStringResource("Off")) : AppLocalization.text(LocalizedStringResource("Not Supported")))
                     } label: { SettingsLabel("Text Chat", systemImage: "bubble.left.and.text.bubble.right") }
                 }
                 .disabled(!ModelAccounts.canChat(provider))
@@ -341,7 +341,7 @@ struct TextChatFeature: View {
                 ForEach(custom.map { ModelCatalog.all(custom: $0) } ?? ModelCatalog.all(provider)) { choice in
                     Toggle(isOn: Binding(get: { ModelCatalog.enabled(provider).contains(choice.id) }, set: { ModelCatalog.set(choice.id, on: $0, for: provider) })) {
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(choice.name)
+                            Text(choice.shortName)
                             if ModelCatalog.fast(choice.id) { Text("Fast").font(.caption).foregroundStyle(Color(.secondaryLabel)) }
                         }
                     }

@@ -118,7 +118,7 @@ struct PokiMenu<Face: View>: View {
                                         let models = choices.compactMap { choice -> ChatModelChoice? in
                                             guard let selection = CustomProviders.parse(choice.id),
                                                   selection.provider == custom.id else { return nil }
-                                            return ChatModelChoice(id: choice.id, name: selection.model)
+                                            return ChatModelChoice(id: choice.id, name: selection.model, shortName: selection.model)
                                         }
                                         if !models.isEmpty {
                                             modelGroup(custom.displayName, provider: provider, choices: models)
@@ -130,7 +130,7 @@ struct PokiMenu<Face: View>: View {
                             }
                         } label: {
                             Label("Model", systemImage: "sparkles")
-                            Text(verbatim: ModelKeys.selectedModelName(in: model.storage))
+                            Text(verbatim: ModelKeys.selectedShortModelName(in: model.storage))
                         }
                         .accessibilityIdentifier("status.model")
                     } else {
@@ -205,7 +205,7 @@ struct PokiMenu<Face: View>: View {
                         let models = choices.compactMap { choice -> ChatModelChoice? in
                             guard let selection = CustomProviders.parse(choice.id),
                                   selection.provider == custom.id else { return nil }
-                            return ChatModelChoice(id: choice.id, name: selection.model)
+                            return ChatModelChoice(id: choice.id, name: selection.model, shortName: selection.model)
                         }
                         if !models.isEmpty {
                             providerMenus.append(nativeModelGroup(custom.displayName, provider: provider, choices: models))
@@ -217,7 +217,7 @@ struct PokiMenu<Face: View>: View {
             }
             let modelMenu = UIMenu(
                 title: AppLocalization.text("Model"),
-                subtitle: ModelKeys.selectedModelName(in: model.storage),
+                subtitle: ModelKeys.selectedShortModelName(in: model.storage),
                 image: UIImage(systemName: "sparkles"),
                 children: providerMenus
             )
@@ -276,7 +276,7 @@ struct PokiMenu<Face: View>: View {
     private func nativeModelGroup(_ title: String, provider: ModelProvider, choices: [ChatModelChoice]) -> UIMenu {
         let actions = choices.map { choice in
             let chosen = ModelKeys.selectedProvider(in: model.storage) == provider && ModelKeys.selectedModel(in: model.storage) == choice.id
-            return UIAction(title: choice.name, state: chosen ? .on : .off) { _ in
+            return UIAction(title: choice.shortName, state: chosen ? .on : .off) { _ in
                 pick(provider, choice.id)
             }
         }
@@ -299,7 +299,7 @@ struct PokiMenu<Face: View>: View {
             ForEach(choices) { choice in
                 let chosen = ModelKeys.selectedProvider(in: model.storage) == provider && ModelKeys.selectedModel(in: model.storage) == choice.id
                 Toggle(isOn: Binding(get: { chosen }, set: { on in if on { pick(provider, choice.id) } })) {
-                    Text(verbatim: choice.name)
+                    Text(verbatim: choice.shortName)
                 }
             }
         } header: {

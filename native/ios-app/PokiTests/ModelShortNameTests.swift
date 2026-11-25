@@ -247,6 +247,29 @@ final class ModelShortNameTests: XCTestCase {
         XCTAssertFalse(texts.contains { $0.contains("ChatGPT GPT-") }, "Provider prefix must not appear in TextChatFeature, got: \(texts)")
     }
 
+    func testShortDisplayNameEdgeCasesAndMultiCustomSelection() {
+        XCTAssertEqual(ChatModelChoice.stripProviderPrefix(from: "o4-mini"), "o4-mini")
+        XCTAssertEqual(ChatModelChoice.stripProviderPrefix(from: "GPT-"), "GPT-")
+        XCTAssertEqual(ChatModelChoice.stripProviderPrefix(from: "openai/gpt-6.2-sol"), "6.2-sol")
+        XCTAssertEqual(ChatModelChoice.stripProviderPrefix(from: "anthropic/claude-opus-5-6"), "opus-5-6")
+        XCTAssertEqual(ChatModelChoice.stripProviderPrefix(from: "google/gemini-4.0-pro"), "4.0-pro")
+        XCTAssertEqual(ChatModelChoice.stripProviderPrefix(from: "deepseek/deepseek-reasoner"), "reasoner")
+
+        let store = storage.storage
+        let first = CustomProviders.upsert(
+            CustomProvider(name: "Office", endpoints: [CustomEndpoint(url: "http://127.0.0.1:8765/v1")], model: "shared-model"),
+            storage: store
+        )
+        let second = CustomProviders.upsert(
+            CustomProvider(name: "Home", endpoints: [CustomEndpoint(url: "http://127.0.0.1:8766/v1")], model: "shared-model"),
+            storage: store
+        )
+        ModelKeys.choose(.custom, model: CustomProviders.choiceID(second.id, "shared-model"), in: store)
+        XCTAssertEqual(ModelKeys.selectedModelName(in: store), "shared-model (Home)")
+        XCTAssertEqual(ModelKeys.selectedShortModelName(in: store), "shared-model")
+        XCTAssertNotEqual(first.id, second.id)
+    }
+
     // MARK: Helpers
 
     private func configureAllBuiltInProviders(in store: PokiStorage) throws {
