@@ -131,7 +131,8 @@ final class ModelListsTests: XCTestCase {
         XCTAssertEqual(astra.cost.output, 40)
         // GPT-6.1 Terra behind OpenRouter takes OpenRouter's catalog entry, never the plain OpenAI setup.
         let terra = try XCTUnwrap(ModelProvider.knownModel(provider: "openrouter", id: "openai/gpt-6.1-terra"))
-        XCTAssertEqual(terra.name, getModel(provider: "openrouter", modelId: "openai/gpt-6.1-terra")?.name)
+        XCTAssertEqual(terra.name, "OpenAI: GPT-6.1 Terra")
+        XCTAssertEqual(terra.api, .openAICompletions)
         XCTAssertEqual(terra.provider, "openrouter")
     }
 
