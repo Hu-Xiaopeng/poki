@@ -9,16 +9,9 @@ struct VoiceView: View {
     /// Pushed in the Poki tab: no navigation stack or Done of its own.
     var embedded = false
     @State private var micDenied = false
-    @State private var modelVersion = ModelKeys.saved
     @AppStorage(FieldDictation.buttonKey) private var dictationButton = FieldDictation.buttonShown
 
     private var voice: VoiceModel { app.voice }
-
-    private var activeVoiceRoute: LiveVoiceRoute? {
-        if voice.usesChatGPTSubscription { return .chatgpt }
-        if VoiceDirect.account != nil { return .realtimeAPI }
-        return nil
-    }
 
     var body: some View {
         if embedded { form } else { NavigationStack { form.toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { if let close { close() } else { dismiss() } } } } } }
@@ -41,19 +34,6 @@ struct VoiceView: View {
                     } label: {
                         SettingsLabel("Live Voice", systemImage: "waveform")
                     }
-                    if let route = activeVoiceRoute {
-                        NavigationLink {
-                            LiveVoicePickerView(route: route)
-                        } label: {
-                            LabeledContent {
-                                Text(verbatim: VoiceCatalog.voice(for: route).displayName)
-                                    .foregroundStyle(Color.secondary)
-                            } label: {
-                                SettingsLabel("Speaking Voice", systemImage: "person.wave.2")
-                            }
-                        }
-                        .accessibilityIdentifier("voice.voicePicker")
-                    }
                     // Dictation runs on this iPhone with every model; its microphone sits beside Send.
                     Toggle(isOn: $dictationButton) { SettingsLabel("Show Dictation Button in Message Field", systemImage: "mic") }
                         .accessibilityIdentifier("voice.dictationButton")
@@ -73,10 +53,8 @@ struct VoiceView: View {
                 #endif
                 ActionButtonSection()
             }
-            .background { Color.clear.accessibilityHidden(true).id(modelVersion) }
             .navigationTitle(AppLocalization.text("Dictation & Mute"))
             .navigationBarTitleDisplayMode(.inline)
-            .onReceive(NotificationCenter.default.publisher(for: ModelKeys.changed)) { _ in modelVersion = ModelKeys.saved }
     }
 
     @Environment(\.dismiss) private var dismiss

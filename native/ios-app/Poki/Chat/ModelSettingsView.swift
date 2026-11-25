@@ -258,11 +258,7 @@ private struct AccountDetail: View {
                 if provider == .chatgpt {
                     NavigationLink { ChatGPTLiveVoiceFeature() } label: {
                         LabeledContent {
-                            Text(CodexAccount.accessToken == nil
-                                 ? AppLocalization.text("Sign In Again")
-                                 : ModelKeys.selectedProvider == .chatgpt
-                                   ? VoiceCatalog.voice(for: .chatgpt).displayName
-                                   : AppLocalization.text("Off"))
+                            Text(ChatGPTLiveVoiceFeature.statusText(activeLabel: VoiceCatalog.voice(for: .chatgpt).displayName))
                         } label: { SettingsLabel("Live Voice", systemImage: "waveform") }
                     }
                     .accessibilityIdentifier("account.chatgpt.liveVoice")
@@ -405,10 +401,10 @@ struct LiveVoiceFeature: View {
                         ForEach(ModelCatalog.voiceOffered(for: account)) { Text($0.name).tag($0.id) }
                     }
                     NavigationLink {
-                        LiveVoicePickerView(route: VoiceCatalog.route(for: account))
+                        LiveVoicePickerView(route: .realtimeAPI)
                     } label: {
                         LabeledContent {
-                            Text(verbatim: VoiceCatalog.voice(for: account).displayName)
+                            Text(verbatim: VoiceCatalog.voice(for: .realtimeAPI).displayName)
                         } label: {
                             Text("Speaking Voice")
                         }
@@ -446,15 +442,15 @@ struct LiveVoiceFeature: View {
 struct ChatGPTLiveVoiceFeature: View {
     @State private var version = ModelKeys.saved
 
-    private var statusText: String {
+    static func statusText(activeLabel: String = "ChatGPT") -> String {
         if CodexAccount.accessToken == nil { return AppLocalization.text("Sign In Again") }
-        return ModelKeys.selectedProvider == .chatgpt ? "ChatGPT" : AppLocalization.text("Off")
+        return ModelKeys.selectedProvider == .chatgpt ? activeLabel : AppLocalization.text("Off")
     }
 
     var body: some View {
         Form {
             Section {
-                LabeledContent("Status", value: statusText)
+                LabeledContent("Status", value: Self.statusText())
                 NavigationLink {
                     LiveVoicePickerView(route: .chatgpt)
                 } label: {
@@ -489,13 +485,13 @@ struct LiveVoicePickerView: View {
     var body: some View {
         Form {
             Section {
-                ForEach(VoiceCatalog.options(for: route)) { option in
+                ForEach(route.options) { option in
                     let isSelected = option == selected
                     Button {
                         VoiceCatalog.setVoice(option, for: route)
                     } label: {
                         HStack(spacing: 12) {
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: 3) {
                                 Text(verbatim: option.displayName)
                                     .foregroundStyle(Color(.label))
                                 Text(verbatim: option.personality)
@@ -505,9 +501,11 @@ struct LiveVoicePickerView: View {
                             Spacer()
                             if isSelected {
                                 Image(systemName: "checkmark")
+                                    .font(.body.weight(.semibold))
                                     .foregroundStyle(.tint)
                             }
                         }
+                        .padding(.vertical, 2)
                         .contentShape(Rectangle())
                     }
                     .accessibilityElement(children: .combine)

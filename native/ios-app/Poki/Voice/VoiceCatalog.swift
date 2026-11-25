@@ -19,10 +19,6 @@ enum LiveVoiceRoute: String, CaseIterable, Hashable, Sendable {
         LiveVoiceOption.allCases.filter { $0.route == self }
     }
 
-    var supportedIDs: Set<String> {
-        Set(options.map(\.rawValue))
-    }
-
     /// Stored under the `voice.` prefix so `SettingsVault` automatically backs it up in Keychain.
     var storageKey: String {
         switch self {
@@ -57,92 +53,45 @@ enum LiveVoiceOption: String, CaseIterable, Identifiable, Hashable, Sendable {
     case arbor
     case sol
 
+    private struct Spec {
+        let route: LiveVoiceRoute
+        let name: LocalizedStringResource
+        let personality: LocalizedStringResource
+    }
+
+    private var spec: Spec {
+        switch self {
+        case .marin: Spec(route: .realtimeAPI, name: "Marin", personality: "Natural and clear")
+        case .cedar: Spec(route: .realtimeAPI, name: "Cedar", personality: "Warm and steady")
+        case .alloy: Spec(route: .realtimeAPI, name: "Alloy", personality: "Neutral and balanced")
+        case .ash: Spec(route: .realtimeAPI, name: "Ash", personality: "Calm and measured")
+        case .ballad: Spec(route: .realtimeAPI, name: "Ballad", personality: "Melodic and expressive")
+        case .coral: Spec(route: .realtimeAPI, name: "Coral", personality: "Bright and energetic")
+        case .echo: Spec(route: .realtimeAPI, name: "Echo", personality: "Smooth and conversational")
+        case .sage: Spec(route: .realtimeAPI, name: "Sage", personality: "Thoughtful and composed")
+        case .shimmer: Spec(route: .realtimeAPI, name: "Shimmer", personality: "Clear and gentle")
+        case .verse: Spec(route: .realtimeAPI, name: "Verse", personality: "Articulate and rhythmic")
+        case .cove: Spec(route: .chatgpt, name: "Cove", personality: "Composed and direct")
+        case .juniper: Spec(route: .chatgpt, name: "Juniper", personality: "Open and upbeat")
+        case .maple: Spec(route: .chatgpt, name: "Maple", personality: "Cheerful and candid")
+        case .spruce: Spec(route: .chatgpt, name: "Spruce", personality: "Calm and affirming")
+        case .ember: Spec(route: .chatgpt, name: "Ember", personality: "Confident and optimistic")
+        case .vale: Spec(route: .chatgpt, name: "Vale", personality: "Bright and inquisitive")
+        case .breeze: Spec(route: .chatgpt, name: "Breeze", personality: "Animated and earnest")
+        case .arbor: Spec(route: .chatgpt, name: "Arbor", personality: "Easygoing and versatile")
+        case .sol: Spec(route: .chatgpt, name: "Sol", personality: "Savvy and relaxed")
+        }
+    }
+
     var id: String { rawValue }
-
-    var route: LiveVoiceRoute {
-        switch self {
-        case .marin, .cedar, .alloy, .ash, .ballad, .coral, .echo, .sage, .shimmer, .verse:
-            .realtimeAPI
-        case .cove, .juniper, .maple, .spruce, .ember, .vale, .breeze, .arbor, .sol:
-            .chatgpt
-        }
-    }
-
-    /// Localized display name (English official name; Chinese name with official English name in parentheses).
-    var displayName: String {
-        switch self {
-        case .marin: AppLocalization.text("Marin")
-        case .cedar: AppLocalization.text("Cedar")
-        case .alloy: AppLocalization.text("Alloy")
-        case .ash: AppLocalization.text("Ash")
-        case .ballad: AppLocalization.text("Ballad")
-        case .coral: AppLocalization.text("Coral")
-        case .echo: AppLocalization.text("Echo")
-        case .sage: AppLocalization.text("Sage")
-        case .shimmer: AppLocalization.text("Shimmer")
-        case .verse: AppLocalization.text("Verse")
-        case .cove: AppLocalization.text("Cove")
-        case .juniper: AppLocalization.text("Juniper")
-        case .maple: AppLocalization.text("Maple")
-        case .spruce: AppLocalization.text("Spruce")
-        case .ember: AppLocalization.text("Ember")
-        case .vale: AppLocalization.text("Vale")
-        case .breeze: AppLocalization.text("Breeze")
-        case .arbor: AppLocalization.text("Arbor")
-        case .sol: AppLocalization.text("Sol")
-        }
-    }
-
-    /// Localized short personality label for settings rows.
-    var personality: String {
-        switch self {
-        case .marin: AppLocalization.text("Natural and clear")
-        case .cedar: AppLocalization.text("Warm and steady")
-        case .alloy: AppLocalization.text("Neutral and balanced")
-        case .ash: AppLocalization.text("Calm and measured")
-        case .ballad: AppLocalization.text("Melodic and expressive")
-        case .coral: AppLocalization.text("Bright and energetic")
-        case .echo: AppLocalization.text("Smooth and conversational")
-        case .sage: AppLocalization.text("Thoughtful and composed")
-        case .shimmer: AppLocalization.text("Clear and gentle")
-        case .verse: AppLocalization.text("Articulate and rhythmic")
-        case .cove: AppLocalization.text("Composed and direct")
-        case .juniper: AppLocalization.text("Open and upbeat")
-        case .maple: AppLocalization.text("Cheerful and candid")
-        case .spruce: AppLocalization.text("Calm and affirming")
-        case .ember: AppLocalization.text("Confident and optimistic")
-        case .vale: AppLocalization.text("Bright and inquisitive")
-        case .breeze: AppLocalization.text("Animated and earnest")
-        case .arbor: AppLocalization.text("Easygoing and versatile")
-        case .sol: AppLocalization.text("Savvy and relaxed")
-        }
-    }
+    var route: LiveVoiceRoute { spec.route }
+    var displayName: String { AppLocalization.text(spec.name) }
+    var personality: String { AppLocalization.text(spec.personality) }
 }
 
 /// Persists and resolves live voice selections per route, guaranteeing every handshake receives a
 /// voice supported by its backend even after switching authentication methods or reading stale data.
 enum VoiceCatalog {
-    static func options(for route: LiveVoiceRoute) -> [LiveVoiceOption] {
-        route.options
-    }
-
-    static func defaultVoice(for route: LiveVoiceRoute) -> LiveVoiceOption {
-        route.defaultVoice
-    }
-
-    static func route(for account: VoiceAccount) -> LiveVoiceRoute {
-        switch account {
-        case .openai, .custom: .realtimeAPI
-        }
-    }
-
-    static func activeRoute(in storage: PokiStorage = .live) -> LiveVoiceRoute {
-        if ModelKeys.selectedProvider(in: storage) == .chatgpt, ChatGPTAccount.isSignedIn(storage: storage) {
-            return .chatgpt
-        }
-        return .realtimeAPI
-    }
-
     /// Parses a stored or caller-provided voice identifier for `route`, falling back to the route's
     /// default voice whenever the value is missing, unknown, or belongs to a different route.
     static func resolve(_ rawValue: String?, for route: LiveVoiceRoute) -> LiveVoiceOption {
@@ -158,21 +107,9 @@ enum VoiceCatalog {
         resolve(storage.defaults.string(forKey: route.storageKey), for: route)
     }
 
-    static func voice(for account: VoiceAccount, in storage: PokiStorage = .live) -> LiveVoiceOption {
-        voice(for: route(for: account), in: storage)
-    }
-
-    static func activeVoice(in storage: PokiStorage = .live) -> LiveVoiceOption {
-        voice(for: activeRoute(in: storage), in: storage)
-    }
-
     static func setVoice(_ option: LiveVoiceOption, for route: LiveVoiceRoute, in storage: PokiStorage = .live) {
         let resolved = resolve(option.rawValue, for: route)
         storage.defaults.set(resolved.rawValue, forKey: route.storageKey)
         ModelKeys.saved += 1
-    }
-
-    static func setVoice(_ option: LiveVoiceOption, for account: VoiceAccount, in storage: PokiStorage = .live) {
-        setVoice(option, for: route(for: account), in: storage)
     }
 }

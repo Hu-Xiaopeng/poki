@@ -216,7 +216,7 @@ enum VoiceDirect {
 
     private static func realtimeSession(for account: VoiceAccount, storage: PokiStorage = .live) -> [String: Any] {
         let selected = ModelCatalog.voiceModelID(for: account, storage: storage)
-        let voice = VoiceCatalog.voice(for: account, in: storage)
+        let voice = VoiceCatalog.voice(for: .realtimeAPI, in: storage)
         return [
             "type": "realtime", "model": account == .openai && selected.hasPrefix("gpt-live-") ? ModelCatalog.voiceRealtime : selected,
             "instructions": realtimeInstructions, "output_modalities": ["audio"],
@@ -230,10 +230,8 @@ enum VoiceDirect {
     }
 
     static func exchangeLiveOffer(_ sdp: String, model: String, apiKey: String,
-                                  voice: LiveVoiceOption? = nil,
                                   storage: PokiStorage = .live) async throws -> String {
-        let resolvedVoice = voice.map { VoiceCatalog.resolve($0.rawValue, for: .realtimeAPI) }
-            ?? VoiceCatalog.voice(for: .realtimeAPI, in: storage)
+        let resolvedVoice = VoiceCatalog.voice(for: .realtimeAPI, in: storage)
         let cancelTool: [String: Any] = ["type": "function", "name": cancelCurrentTask, "parameters": empty,
                                          "description": "Stop further steps of the current phone task. Call only for an explicit cancellation request, never for words the user wants quoted, entered or sent. Call it without saying anything first."]
         let live: [String: Any] = [
