@@ -126,10 +126,13 @@ final class ModelListsTests: XCTestCase {
         XCTAssertEqual(sol.cost.input, 2)
         XCTAssertNotNil(sol.compat)
         let astra = try XCTUnwrap(ModelProvider.openrouter.piModel("openai/gpt-6.2-astra", storage: storage))
-        XCTAssertEqual(astra.name, "GPT-6.2 Astra")
+        // OpenRouter's own catalog entry, named the way pi names OpenRouter models.
+        XCTAssertEqual(astra.name, "OpenAI: GPT-6.2 Astra")
         XCTAssertEqual(astra.cost.output, 40)
-        // GPT-6.1 Terra behind OpenRouter keeps the plain setup (ConnectionCheckTests).
-        XCTAssertNil(ModelProvider.knownModel(provider: "openrouter", id: "openai/gpt-6.1-terra"))
+        // GPT-6.1 Terra behind OpenRouter takes OpenRouter's catalog entry, never the plain OpenAI setup.
+        let terra = try XCTUnwrap(ModelProvider.knownModel(provider: "openrouter", id: "openai/gpt-6.1-terra"))
+        XCTAssertEqual(terra.name, getModel(provider: "openrouter", modelId: "openai/gpt-6.1-terra")?.name)
+        XCTAssertEqual(terra.provider, "openrouter")
     }
 
     @MainActor
