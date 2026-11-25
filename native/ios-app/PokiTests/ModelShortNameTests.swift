@@ -10,16 +10,41 @@ final class ModelShortNameTests: XCTestCase {
     private var window: UIWindow?
     private var hostLocalization: HostLocalizationSnapshot!
     private var storage: IsolatedTestStorage!
+    private var accessibilityHandle: UnsafeMutableRawPointer?
+    private var setAccessibilityAutomationEnabled: (@convention(c) (Int32) -> Void)?
+    private var previousAccessibilityAutomationEnabled: Int32?
 
     override func setUp() async throws {
         hostLocalization = HostLocalizationSnapshot.capture()
         storage = try IsolatedTestStorage(prefix: "model-short-name")
         AppLocalization.shared.preference = "en"
+        let handle = try XCTUnwrap(dlopen("/usr/lib/libAccessibility.dylib", RTLD_NOW))
+        accessibilityHandle = handle
+        let isEnabled = unsafeBitCast(
+            try XCTUnwrap(dlsym(handle, "_AXSAutomationEnabled")),
+            to: (@convention(c) () -> Int32).self
+        )
+        let setEnabled = unsafeBitCast(
+            try XCTUnwrap(dlsym(handle, "_AXSSetAutomationEnabled")),
+            to: (@convention(c) (Int32) -> Void).self
+        )
+        setAccessibilityAutomationEnabled = setEnabled
+        previousAccessibilityAutomationEnabled = isEnabled()
+        setEnabled(1)
     }
 
     override func tearDown() async throws {
         window?.isHidden = true
         window = nil
+        if let previous = previousAccessibilityAutomationEnabled {
+            setAccessibilityAutomationEnabled?(previous)
+        }
+        previousAccessibilityAutomationEnabled = nil
+        setAccessibilityAutomationEnabled = nil
+        if let handle = accessibilityHandle {
+            dlclose(handle)
+            accessibilityHandle = nil
+        }
         hostLocalization.restore()
         hostLocalization.assertUnchanged()
         if let storage {
@@ -302,8 +327,10 @@ final class ModelShortNameTests: XCTestCase {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let next = UIWindow(windowScene: scene)
         next.frame = scene.screen.bounds
-        next.rootViewController = UIHostingController(rootView: view)
+        next.rootViewController = UIHostingController(rootView: view.environment(\.accessibilityEnabled, true))
         next.makeKeyAndVisible()
+        next.layoutIfNeeded()
+        UIAccessibility.post(notification: .screenChanged, argument: next.rootViewController?.view)
         self.window = next
         return next
     }
