@@ -17,6 +17,7 @@ static void (^onScreenCapture)(void);
 @implementation XCUIScreen
 + (NSArray *)screens { return panels; }
 + (instancetype)mainScreen { return panels.firstObject; }
+- (CGFloat)scale { return 3; }
 - (instancetype)screenshot {
     capturedDisplayID = self.displayID;
     if (onScreenCapture) {
@@ -105,6 +106,7 @@ static void (^onScreenCapture)(void);
 @interface AXNode : NSObject
 @property(nonatomic) int processIdentifier;
 @property(nonatomic) long long elementType;
+@property(nonatomic) long long displayID;
 @property(nonatomic) CGRect frame;
 @property(nonatomic, copy) NSString *label;
 @property(nonatomic, copy) NSString *identifier;
@@ -433,6 +435,7 @@ static BOOL checkCompanionBindingRetry(PKDisplayGeometry scene, CGSize crop) {
 @property(nonatomic, strong) AXNode *wechatSnapshot;
 @property(nonatomic, strong) AXNode *springBoardSnapshot;
 @property(nonatomic, copy) NSArray<AXNode *> *activeApps;
+@property(nonatomic, copy) NSArray<NSNumber *> *compatibilityDisplayIDs;
 @property(nonatomic) NSInteger wechatSnapshotCalls;
 @end
 @implementation CoverWeChatFixture
@@ -454,6 +457,13 @@ static BOOL checkCompanionBindingRetry(PKDisplayGeometry scene, CGSize crop) {
 - (id)requestSnapshotForElement:(id)element attributes:(NSArray *)attributes parameters:(NSDictionary *)parameters error:(NSError **)error {
     if (element == self.wechat) {
         self.wechatSnapshotCalls++;
+        if (self.compatibilityDisplayIDs) {
+            BOOL asked = [attributes containsObject:@"XC_kAXXCAttributeWindowDisplayId"];
+            self.wechatSnapshot.displayID = asked ? self.compatibilityDisplayIDs.firstObject.longLongValue : 0;
+            [self.wechatSnapshot.children enumerateObjectsUsingBlock:^(AXNode *window, NSUInteger index, BOOL *stop) {
+                window.displayID = asked ? self.compatibilityDisplayIDs[index + 1].longLongValue : 0;
+            }];
+        }
         return self.wechatSnapshot;
     }
     if (element == self.springBoard) return self.springBoardSnapshot;
@@ -476,6 +486,120 @@ static CoverWeChatFixture *coverWeChat(PKDisplayGeometry scene) {
     sbRoot.frame = CGRectMake(0, 0, 466, 678);
     runner.springBoardSnapshot = sbRoot;
     return runner;
+}
+
+static PKOutcome *compatibilityTap(PKInProcess *runner, CGPoint point, PKDisplayGeometry geometry) {
+    return [runner touch:@[@[[PKTouchPoint at:point offset:0], [PKTouchPoint at:point offset:0.05]]]
+                 timeout:1 geometry:geometry];
+}
+
+static BOOL checkCompatibilityCompanion(PKDisplayGeometry scene, CGSize crop, BOOL targetRight) {
+    scene.peer.origin.x = targetRight ? 482 : 0;
+    CompanionFixture *runner = companion(scene);
+    runner.ownOnRight = !targetRight;
+    AXNode *root = [AXNode new], *window = [AXNode new];
+    root.elementType = 2;
+    window.elementType = 4;
+    root.frame = window.frame = CGRectMake(0, 0, 375, 667);
+    root.children = @[window];
+    runner.snapshot = root;
+
+    if (![runner beginDuoCompanionTask] || ![runner bindDuoCompanionTarget]) return NO;
+    NSString *stage = targetRight ? @"legacy app in the right pane" : @"legacy app in the left pane";
+    if (!checkShot(runner, 2, crop, targetRight ? 255 : 0, stage, YES)) return NO;
+    NSString *code = nil;
+    if ([runner sourceXML:NULL code:&code] || ![code isEqualToString:@"compatibility_window_requires_screenshot_coordinates"] ||
+        !CGRectEqualToRect(runner.viewport, scene.peer)) {
+        NSLog(@"%@ exposed app-local elements or lost the confirmed crop: %@", stage, code);
+        return NO;
+    }
+    CGPoint point = CGPointMake(targetRight ? 818 : 430, 80);
+    PKOutcome *tap = compatibilityTap(runner, point, runner.displayGeometry);
+    ReadySession *session = [runner valueForKey:@"sessions"];
+    return tap.delivery == PKDeliverySent && session.gesture.displayID == 2 &&
+           CGPointEqualToPoint(session.gesture.path.start, CGPointMake(point.y, 951 - point.x));
+}
+
+static BOOL checkCompatibilityWindow(PKDisplayGeometry coverScene, CGSize innerPixels, CGSize coverPixels) {
+    CoverWeChatFixture *runner = coverWeChat(coverScene);
+    AXNode *root = [AXNode new];
+    root.elementType = 2;
+    root.frame = CGRectMake(0, 0, 375, 667);
+    AXNode *first = [AXNode new], *second = [AXNode new];
+    first.elementType = second.elementType = 4;
+    first.frame = second.frame = root.frame;
+    AXNode *button = [AXNode new];
+    button.elementType = 9;
+    button.frame = CGRectMake(14, 23, 35, 32);
+    button.label = @"Search";
+    first.children = @[button];
+    root.children = @[first, second];
+    runner.wechatSnapshot = root;
+    runner.compatibilityDisplayIDs = @[@2, @2, @2];
+    ReadySession *session = [runner valueForKey:@"sessions"];
+    session.reportedOrientation = UIInterfaceOrientationLandscapeRight;
+    NSString *code = nil;
+    if (!checkShot(runner, 2, innerPixels, 255, @"legacy window on the unfolded inner display", NO)) return NO;
+    if ([runner sourceXML:NULL code:&code] || ![code isEqualToString:@"compatibility_window_requires_screenshot_coordinates"]) {
+        printf("FAIL app-local compatibility coordinates were exposed as screenshot coordinates\n");
+        return NO;
+    }
+
+    PKDisplayGeometry geometry = runner.displayGeometry;
+    // OCR can select a visible point with the window parked at any horizontal position.
+    for (NSNumber *x in @[@130, @418, @800]) {
+        PKOutcome *tap = compatibilityTap(runner, CGPointMake(x.doubleValue, 260), geometry);
+        if (tap.delivery != PKDeliverySent || session.gesture.displayID != 2 ||
+            !CGPointEqualToPoint(session.gesture.path.start, CGPointMake(409, x.doubleValue))) {
+            printf("FAIL inner compatibility tap did not follow the physical screenshot point\n");
+            return NO;
+        }
+    }
+
+    session.gesture = nil;
+    if (![compatibilityTap(runner, CGPointMake(952, 260), geometry).code isEqualToString:@"outside_target_display"] || session.gesture) return NO;
+
+    runner.wechat.processIdentifier = getpid() + 13;
+    if (compatibilityTap(runner, CGPointMake(418, 260), geometry).delivery != PKDeliveryNotSent || session.gesture) {
+        printf("FAIL a different foreground PID could use the old compatibility screenshot\n");
+        return NO;
+    }
+    if (!checkShot(runner, 2, innerPixels, 255, @"legacy window after a fresh read of the new PID", NO)) return NO;
+    geometry = runner.displayGeometry;
+
+    runner.compatibilityDisplayIDs = @[@2, @2, @1];
+    if (compatibilityTap(runner, CGPointMake(418, 260), geometry).delivery != PKDeliveryNotSent || session.gesture ||
+        [runner screenshot:NULL refreshViewport:NO] != nil) {
+        printf("FAIL conflicting compatibility windows did not invalidate capture and touch\n");
+        return NO;
+    }
+
+    runner.compatibilityDisplayIDs = @[@0, @0, @0];
+    if ([runner screenshot:NULL refreshViewport:NO] != nil) return NO;
+    runner.compatibilityDisplayIDs = @[@2, @2, @2];
+    AXNode *beside = [AXNode new];
+    beside.processIdentifier = getpid() + 12;
+    runner.activeApps = @[runner.wechat, runner.springBoard, beside];
+    if ([runner screenshot:NULL refreshViewport:NO] != nil) return NO;
+    runner.activeApps = nil;
+
+    session.reportedOrientation = UIInterfaceOrientationPortrait;
+    CGSize innerPortrait = CGSizeMake(innerPixels.height, innerPixels.width);
+    XCUIScreen *innerScreen = panels[1];
+    NSData *landscape = innerScreen.pixels;
+    innerScreen.pixels = panel(2, innerScreen.bounds.size, innerPortrait, UIColor.whiteColor).pixels;
+    BOOL portrait = checkShot(runner, 2, innerPortrait, 255, @"legacy window on the portrait inner display", NO);
+    CGPoint portraitPoint = CGPointMake(220, 325);
+    PKOutcome *portraitTap = compatibilityTap(runner, portraitPoint, runner.displayGeometry);
+    innerScreen.pixels = landscape;
+    if (!portrait || portraitTap.delivery != PKDeliverySent || session.gesture.displayID != 2 ||
+        !CGPointEqualToPoint(session.gesture.path.start, portraitPoint)) return NO;
+
+    runner.compatibilityDisplayIDs = @[@1, @1, @1];
+    if (!checkShot(runner, 1, coverPixels, 0, @"legacy window on the cover display", NO)) return NO;
+    PKOutcome *coverTap = compatibilityTap(runner, portraitPoint, runner.displayGeometry);
+    return coverTap.delivery == PKDeliverySent && session.gesture.displayID == 1 &&
+           CGPointEqualToPoint(session.gesture.path.start, portraitPoint);
 }
 
 static BOOL checkCoverWeChatUnavailableAXFallback(PKDisplayGeometry coverScene, CGSize coverPixels) {
@@ -632,6 +756,8 @@ static BOOL checkCompanionTaskHeldPicture(PKDisplayGeometry scene, CGSize crop) 
 }
 
 int main(void) {
+    // The simulated hardware here is supplied by the fixture, regardless of the host simulator.
+    setenv("SIMULATOR_MODEL_IDENTIFIER", "iPhone19,4", 1);
     @autoreleasepool {
         CGSize cover = CGSizeMake(1398, 2034), inner = CGSizeMake(2852, 2006);
         panels = @[panel(1, cover, cover, UIColor.blackColor),
@@ -653,6 +779,7 @@ int main(void) {
         if (!checkShot(runner, 2, inner, 255, @"unfolded inner landscape", NO)) return 1;
 
         XCUIScreen *active = panels[1];
+        NSData *innerFullScreen = active.pixels;
         UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat defaultFormat];
         format.scale = 1;
         format.opaque = YES;
@@ -691,10 +818,12 @@ int main(void) {
         BOOL switchBeforeRead = checkCompanionAfterSwitch(geometry, crop, YES);
         BOOL bindingRetry = checkCompanionBindingRetry(geometry, crop);
         BOOL heldTaskPicture = checkCompanionTaskHeldPicture(geometry, crop);
+        BOOL legacyCompanionLeft = checkCompatibilityCompanion(geometry, crop, NO);
+        BOOL legacyCompanionRight = checkCompatibilityCompanion(geometry, crop, YES);
         PKDisplayGeometry coverGeometry = {.bounds = CGRectMake(0, 0, 466, 678),
             .peer = CGRectNull, .nativeSize = cover, .toFixed = CGAffineTransformIdentity,
             .orientation = UIInterfaceOrientationPortrait, .routesDisplay = YES};
-        __block BOOL coverFallback = NO, coverCompatLayout = NO, coverPortraitPNG = NO, coverLaunch = NO, coverHandoff = NO;
+        __block BOOL coverFallback = NO, coverCompatLayout = NO, coverPortraitPNG = NO, coverLaunch = NO, coverHandoff = NO, innerCompatibility = NO;
         dispatch_semaphore_t coverDone = dispatch_semaphore_create(0);
         dispatch_async(dispatch_queue_create("duo.cover.test", DISPATCH_QUEUE_SERIAL), ^{
             coverFallback = checkCoverWeChatUnavailableAXFallback(coverGeometry, cover);
@@ -702,11 +831,13 @@ int main(void) {
             coverPortraitPNG = checkCoverPortraitOrientationPNGFallback(coverGeometry, cover);
             coverLaunch = checkCoverLaunchSkipsAXSnapshotAndIgnoresTransientLandscape(coverGeometry);
             coverHandoff = checkCoverSceneToBackgroundHandoffDuringScreenshot(coverGeometry, cover);
+            active.pixels = innerFullScreen;
+            innerCompatibility = checkCompatibilityWindow(coverGeometry, inner, cover);
             dispatch_semaphore_signal(coverDone);
         });
         dispatch_semaphore_wait(coverDone, DISPATCH_TIME_FOREVER);
         return launchPlacement && recoveredEdge && picture && inset && activation && opensCalculator && afterSwitch &&
-            switchBeforeRead && bindingRetry && heldTaskPicture && coverFallback && coverCompatLayout &&
-            coverPortraitPNG && coverLaunch && coverHandoff ? 0 : 1;
+            switchBeforeRead && bindingRetry && heldTaskPicture && legacyCompanionLeft && legacyCompanionRight && coverFallback && coverCompatLayout &&
+            coverPortraitPNG && coverLaunch && coverHandoff && innerCompatibility ? 0 : 1;
     }
 }

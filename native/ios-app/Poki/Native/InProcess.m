@@ -470,7 +470,8 @@ static id PKRequestSnapshot(id ax, id element, NSInteger maxDepth, NSInteger max
     return PKRequestSnapshotWithin(6, ax, element, maxDepth, maxNodes, code);
 }
 
-static id PKRequestSnapshotWithin(NSTimeInterval seconds, id ax, id element, NSInteger maxDepth, NSInteger maxNodes, NSString **code) {
+static id PKRequestSnapshotWithAttributes(NSTimeInterval seconds, id ax, id element, NSInteger maxDepth, NSInteger maxNodes,
+                                          NSArray *attributes, NSString **code) {
     SEL selector = @selector(requestSnapshotForElement:attributes:parameters:error:);
     if (![ax respondsToSelector:selector] || !PKMatches([ax methodSignatureForSelector:selector], "@", @[@"@", @"@", @"@", @"^@"])) {
         if (code) *code = @"snapshot_api_unavailable";
@@ -485,7 +486,6 @@ static id PKRequestSnapshotWithin(NSTimeInterval seconds, id ax, id element, NSI
     parameters[@"traverseFromParentsToChildren"] = @YES;
     __block NSError *error = nil;
     __block NSString *thrown = nil;
-    NSArray *attributes = PKSnapshotAttributes();
     NSDictionary *frozen = parameters.copy;
     NSString *given = nil;
     id result = PKBounded(PKAXPid(element), seconds, &given, ^id {
@@ -503,6 +503,10 @@ static id PKRequestSnapshotWithin(NSTimeInterval seconds, id ax, id element, NSI
     id root = nil;
     @try { root = [result valueForKey:@"_rootElementSnapshot"]; } @catch (__unused NSException *e) {}
     return root ?: result;
+}
+
+static id PKRequestSnapshotWithin(NSTimeInterval seconds, id ax, id element, NSInteger maxDepth, NSInteger maxNodes, NSString **code) {
+    return PKRequestSnapshotWithAttributes(seconds, ax, element, maxDepth, maxNodes, PKSnapshotAttributes(), code);
 }
 
 /// The AX server can refuse a deep request; each shallower depth is tried once before giving up.
@@ -711,6 +715,61 @@ static id PKUniqueAutomationScreen(PKDisplayGeometry geometry) {
     }
     return matched ?: (renderMatches == 1 ? rendered : nil);
 }
+
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 270100
+static const CGRect PKDuoLegacyWindow = {{0, 0}, {375, 667}};
+
+static long long PKSnapshotDisplayID(id snapshot) {
+    SEL selector = @selector(displayID);
+    return PKSignature(snapshot, selector, "q", @[]) ? [snapshot displayID] : 0;
+}
+
+// A legacy 375 × 667-point app keeps its local window size in compatibility mode.
+// Ask XCTest which display hosts the foreground windows before using physical coordinates.
+static id PKDuoScreenForCompatibilityWindow(id ax, id element, CGRect window, CGRect *physicalFrame) {
+    if (!CGRectEqualToRect(window, PKDuoLegacyWindow) || PKPhoneLocked()) return nil;
+    int pid = PKAXPid(element);
+    id system = PKBounded(0, 0.4, NULL, ^id {
+        return [ax respondsToSelector:@selector(systemApplication)] ? [ax systemApplication] : nil;
+    });
+    NSArray *apps = PKActiveApplications(ax);
+    int systemPID = PKAXPid(system);
+    if (pid <= 0 || systemPID <= 0 || pid == systemPID) return nil;
+    BOOL foreground = NO;
+    for (id app in apps) {
+        int active = PKAXPid(app);
+        if (active == pid) foreground = YES;
+        else if (active > 0 && active != systemPID) return nil;
+    }
+    if (!foreground) return nil;
+
+    NSArray *attributes = [PKSnapshotAttributes() arrayByAddingObject:@"XC_kAXXCAttributeWindowDisplayId"];
+    id root = PKRequestSnapshotWithAttributes(1, ax, element, 2, 24, attributes, NULL);
+    if (!CGRectEqualToRect(PKDuoFullWindow(root), window)) return nil;
+    long long displayID = PKSnapshotDisplayID(root);
+    if (displayID <= 0) return nil;
+    for (id child in [root children]) {
+        if ([PKTypeName([child elementType]) isEqualToString:@"Window"] &&
+            (!CGRectEqualToRect([child frame], window) || PKSnapshotDisplayID(child) != displayID)) return nil;
+    }
+
+    id matched = nil;
+    for (id screen in [NSClassFromString(@"XCUIScreen") screens]) {
+        if (![screen respondsToSelector:@selector(displayID)] || [screen displayID] != displayID) continue;
+        if (matched) return nil;
+        matched = screen;
+    }
+    if (!PKSignature(matched, @selector(scale), @encode(CGFloat), @[]) || ![matched respondsToSelector:@selector(bounds)]) return nil;
+    CGFloat scale = ((CGFloat (*)(id, SEL))objc_msgSend)(matched, @selector(scale));
+    CGSize bounds = [matched bounds].size;
+    if (!isfinite(scale) || scale < 1 || scale > 4) return nil;
+    CGSize points = CGSizeMake(MIN(bounds.width, bounds.height) / scale, MAX(bounds.width, bounds.height) / scale);
+    if (!PKDuoMatchesRenderSize(points, CGSizeMake(669, 951), 1) &&
+        !PKDuoMatchesRenderSize(points, CGSizeMake(466, 678), 1)) return nil;
+    *physicalFrame = (CGRect){CGPointZero, points};
+    return matched;
+}
+#endif
 
 // In Split View UIKit can describe the scene's own pane as its entire screen.
 // The pane still spans the short axis of the active panel.
@@ -1063,6 +1122,7 @@ static NSInteger PKWorkspaceAppearanceOrder(NSArray<NSData *> *current, NSArray<
     uint64_t _orientationRevision;
     PKDisplayGeometry _duoFullScreen;
     NSNumber *_duoPanelID;
+    int _duoCompatibilityPID;
     uint64_t _duoPanelGeneration, _duoPanelRevision, _duoSample, _duoPublishedSample;
     /// The generation that has answered with an element tree, and the one being checked now.
     uint64_t _readableGeneration, _provingGeneration;
@@ -1683,13 +1743,27 @@ static BOOL PKSameWorkspace(PKWorkspace *a, PKWorkspace *b) {
         id screen = lockDisplay ? PKUniqueAutomationScreen(geometry) : PKAutomationScreen(geometry);
         if ([screen respondsToSelector:@selector(displayID)]) recordDisplay = @([screen displayID]);
         BOOL confirmed = [lockDisplay isEqual:recordDisplay];
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 270100
+        int compatibilityPID = 0;
+#endif
         if (!lockDisplay) {
             @synchronized (self) {
                 confirmed = recordDisplay && [_capturedDisplay isEqual:recordDisplay] &&
                     PKSameDisplay(geometry, _capturedGeometry) && CGRectEqualToRect(_viewport, _capturedViewport);
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 270100
+                if (_duoPanelGeneration == generation) compatibilityPID = _duoCompatibilityPID;
+#endif
             }
         }
         if (!confirmed) return [PKOutcome delivery:PKDeliveryNotSent code:@"target_display_unavailable" detail:@"look again to confirm the current display"];
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 270100
+        if (compatibilityPID) {
+            for (NSArray<PKTouchPoint *> *finger in fingers)
+                for (PKTouchPoint *point in finger)
+                    if (!CGRectContainsPoint(geometry.bounds, point.point))
+                        return [PKOutcome delivery:PKDeliveryNotSent code:@"outside_target_display" detail:nil];
+        }
+#endif
         // The orientation-only initializer encodes display 0, even when XCTest now considers
         // the inner panel its main screen. Dispatch to the same display the crop came from.
         SEL selector = @selector(initWithName:displayID:interfaceOrientation:);
@@ -1861,6 +1935,7 @@ static BOOL PKSameWorkspace(PKWorkspace *a, PKWorkspace *b) {
         @synchronized (self) { inputs = _inputs; }
         id session = nil;
         uint64_t generation = 0, request = 0, sceneRevBefore = 0;
+        int compatibilityPID = 0;
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 270100
         if (PKIsDuo() && !selected && CGRectIsNull(geometry.peer)) {
             @synchronized (self) {
@@ -1872,6 +1947,7 @@ static BOOL PKSameWorkspace(PKWorkspace *a, PKWorkspace *b) {
             session = [_sessions prepare:NULL];
             generation = _sessions.generation;
             if (![self refreshDuoFullScreenGeometryForSession:session generation:generation error:code]) return nil;
+            @synchronized (self) { compatibilityPID = _duoCompatibilityPID; }
             sceneRevBefore = self.sceneDisplayGeometry.orientationRevision;
             geometry = self.displayGeometry;
         }
@@ -1930,7 +2006,7 @@ static BOOL PKSameWorkspace(PKWorkspace *a, PKWorkspace *b) {
             // the tree read; during a held request use only a previously confirmed split crop.
             PKDisplayGeometry current = self.displayGeometry;
             BOOL sameDisplay = PKSameDisplay(geometry, current);
-            if (!sameDisplay && request && !selected && CGRectIsNull(geometry.peer) && CGRectIsNull(current.peer) &&
+            if (!sameDisplay && !compatibilityPID && request && !selected && CGRectIsNull(geometry.peer) && CGRectIsNull(current.peer) &&
                 PKSameDuoFullPanel(geometry, current, sceneRevBefore, self.sceneDisplayGeometry.orientationRevision)) {
                 geometry = current;
                 sameDisplay = YES;
@@ -1951,6 +2027,10 @@ static BOOL PKSameWorkspace(PKWorkspace *a, PKWorkspace *b) {
             } else if (refreshViewport) {
                 NSDictionary *info = nil; id ax;
                 id element = [self sharedFront:&info ax:&ax code:NULL];
+                if (compatibilityPID && PKAXPid(element) != compatibilityPID) {
+                    if (code) *code = @"display_changed_during_screenshot";
+                    return nil;
+                }
                 if (PKIsDuo() && !CGRectIsNull(geometry.peer) && !info[@"pane"]) {
                     if (code) *code = @"target_pane_unconfirmed";
                     return nil;
@@ -1987,14 +2067,15 @@ static BOOL PKSameWorkspace(PKWorkspace *a, PKWorkspace *b) {
                         return nil;
                     }
                     PKDisplayGeometry confirmed = self.displayGeometry;
-                    if (!PKSameDuoFullPanel(geometry, confirmed, sceneRevBefore, self.sceneDisplayGeometry.orientationRevision)) {
+                    if (compatibilityPID ? !PKSameDisplay(geometry, confirmed) :
+                        !PKSameDuoFullPanel(geometry, confirmed, sceneRevBefore, self.sceneDisplayGeometry.orientationRevision)) {
                         if (code) *code = @"display_changed_during_screenshot";
                         return nil;
                     }
                     geometry = confirmed;
                 }
                 @synchronized (self) {
-                    if ((request && request != _duoCaptureRequest) ||
+                    if ((request && (request != _duoCaptureRequest || compatibilityPID != _duoCompatibilityPID)) ||
                         (companionTask && (companionTask != _duoCompanionTask || inputs != _inputs ||
                          (!refreshViewport && [workspaceFront[@"companionGeneration"] unsignedLongLongValue] != _sessions.generation))) ||
                         (companion && (selected != _workspace || inputs != _inputs || selected.generation != _sessions.generation))) {
@@ -2495,6 +2576,7 @@ static const int PKFrontKey = -1;
             _duoPublishedSample = ++_duoSample;
             if (_duoPanelGeneration) {
                 _duoPanelGeneration = 0;
+                _duoCompatibilityPID = 0;
                 _capturedDisplay = nil;
             }
         }
@@ -2558,6 +2640,15 @@ static const int PKFrontKey = -1;
     PKDisplayGeometry panel = {window, CGRectNull, CGSizeZero, CGAffineTransformIdentity,
                                UIInterfaceOrientationUnknown, NO, YES, 0};
     id screen = CGRectIsNull(window) ? nil : PKUniqueAutomationScreen(panel);
+    int compatibilityPID = 0;
+    if (!screen) {
+        screen = PKDuoScreenForCompatibilityWindow(ax, element, window, &window);
+        if (screen) {
+            panel.bounds = window;
+            fixedExtent = YES;
+            compatibilityPID = PKAXPid(element);
+        }
+    }
     NSNumber *panelID = [screen respondsToSelector:@selector(displayID)] ? @([screen displayID]) : nil;
     if (panelID && PKSignature(session, @selector(getInterfaceOrientationWithReply:), "v", @[@"@?"])) {
         dispatch_semaphore_t done = dispatch_semaphore_create(0);
@@ -2603,20 +2694,22 @@ static const int PKFrontKey = -1;
         if (confirmed && sample < _duoPublishedSample) {
             // A read running on another queue already published a newer observation.
             confirmed = _duoPanelGeneration == generation && [_duoPanelID isEqual:panelID] &&
-                        PKSameDisplay(panel, _duoFullScreen);
+                        compatibilityPID == _duoCompatibilityPID && PKSameDisplay(panel, _duoFullScreen);
         } else if (sample >= _duoPublishedSample) {
             _duoPublishedSample = sample;
             if (confirmed) {
                 if (_duoPanelGeneration != generation || ![_duoPanelID isEqual:panelID] ||
-                    !PKSameDisplay(panel, _duoFullScreen)) {
+                    compatibilityPID != _duoCompatibilityPID || !PKSameDisplay(panel, _duoFullScreen)) {
                     _duoPanelRevision++;
                     _capturedDisplay = nil;
                 }
                 _duoFullScreen = panel;
                 _duoPanelID = panelID;
+                _duoCompatibilityPID = compatibilityPID;
                 _duoPanelGeneration = generation;
             } else {
                 _duoPanelGeneration = 0;
+                _duoCompatibilityPID = 0;
                 _capturedDisplay = nil;
             }
         }
@@ -2825,6 +2918,18 @@ CGPoint PKWorkspaceLauncherPoint(NSDictionary<NSString *, NSArray<NSValue *> *> 
             front[@"name"] = PKText([root label]) ?: @"";
             [self rememberFront:front];
         }
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 270100
+        if (PKIsDuo() && CGRectEqualToRect([root frame], PKDuoLegacyWindow)) {
+            BOOL companion = self.hasDuoCompanionTask && info[@"pane"] && !CGRectIsNull(viewport);
+            BOOL fullScreen = !paneRead && !self.hasDuoCompanionTask && !self.isPokiSceneVisible;
+            if (companion || fullScreen) {
+                // Legacy windows report app-local points independent of their position in a full
+                // display or pane. Number the text in the confirmed screenshot instead.
+                if (code) *code = @"compatibility_window_requires_screenshot_coordinates";
+                return nil;
+            }
+        }
+#endif
         __block NSUInteger count = 0;
         NSMutableString *xml = [NSMutableString stringWithString:@"<?xml version=\"1.0\" encoding=\"UTF-8\"?><AppiumAUT>"];
         __block NSDictionary *focus = nil;
