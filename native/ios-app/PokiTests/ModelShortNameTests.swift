@@ -279,6 +279,10 @@ final class ModelShortNameTests: XCTestCase {
         XCTAssertEqual(ChatModelChoice.stripProviderPrefix(from: "anthropic/claude-opus-5-6"), "opus-5-6")
         XCTAssertEqual(ChatModelChoice.stripProviderPrefix(from: "google/gemini-4.0-pro"), "4.0-pro")
         XCTAssertEqual(ChatModelChoice.stripProviderPrefix(from: "deepseek/deepseek-reasoner"), "reasoner")
+        XCTAssertEqual(ChatModelChoice.stripProviderPrefix(from: "workbuddy/deepseek-v4.1-flash"), "v4.1-flash")
+        XCTAssertEqual(ChatModelChoice.stripProviderPrefix(from: "workbuddy/qwen3-coder"), "qwen3-coder")
+        XCTAssertEqual(ChatModelChoice.stripProviderPrefix(from: "workbuddy/"), "workbuddy/")
+        XCTAssertEqual(ChatModelChoice.stripProviderPrefix(from: "Model A / Model B"), "Model A / Model B")
 
         let store = storage.storage
         let first = CustomProviders.upsert(
@@ -293,6 +297,178 @@ final class ModelShortNameTests: XCTestCase {
         XCTAssertEqual(ModelKeys.selectedModelName(in: store), "shared-model (Home)")
         XCTAssertEqual(ModelKeys.selectedShortModelName(in: store), "shared-model")
         XCTAssertNotEqual(first.id, second.id)
+    }
+
+    func testSettingsRowKeepsTitleIntactAndValueSingleLineWhenValueIsLong() throws {
+        let longValues = [
+            "workbuddy/deepseek-v4.1-flash",
+            "enterprise-very-long-custom-model-name-that-exceeds-row-width-2026",
+        ]
+        for (localeCode, expectedTitle) in [("zh-Hans", "模型"), ("en", "Models")] {
+            AppLocalization.shared.preference = localeCode
+            let locale = AppLocalization.locale
+
+            for width in [CGFloat(295), CGFloat(321)] {
+                let reference = UIHostingController(
+                    rootView: SettingsRow(title: "Models", symbol: "sparkles", value: "On")
+                        .environment(\.locale, locale)
+                )
+                let referenceHeight = reference.sizeThatFits(in: CGSize(width: width, height: 2_000)).height
+
+                let referenceWindow = try show(
+                    SettingsRow(title: "Models", symbol: "sparkles", value: "On")
+                        .frame(width: width)
+                        .environment(\.locale, locale)
+                )
+                settle { self.accessibilityFrame(label: expectedTitle, in: referenceWindow) != nil }
+                let referenceTitleFrame = try XCTUnwrap(accessibilityFrame(label: expectedTitle, in: referenceWindow))
+                let referenceValueFrame = try XCTUnwrap(accessibilityFrame(label: "On", in: referenceWindow))
+
+                for longValue in longValues {
+                    let row = UIHostingController(
+                        rootView: SettingsRow(title: "Models", symbol: "sparkles", value: longValue)
+                            .environment(\.locale, locale)
+                    )
+                    let rowHeight = row.sizeThatFits(in: CGSize(width: width, height: 2_000)).height
+                    XCTAssertLessThanOrEqual(
+                        rowHeight,
+                        referenceHeight + 1,
+                        "\(localeCode) width=\(width) value=\(longValue): row must stay single-line (got \(rowHeight), reference \(referenceHeight))"
+                    )
+
+                    let longWindow = try show(
+                        SettingsRow(title: "Models", symbol: "sparkles", value: longValue)
+                            .frame(width: width)
+                            .environment(\.locale, locale)
+                    )
+                    settle { self.accessibilityFrame(label: expectedTitle, in: longWindow) != nil }
+                    let titleFrame = try XCTUnwrap(accessibilityFrame(label: expectedTitle, in: longWindow))
+                    let valueFrame = try XCTUnwrap(accessibilityFrame(label: longValue, in: longWindow))
+                    XCTAssertGreaterThanOrEqual(
+                        titleFrame.width,
+                        referenceTitleFrame.width - 1,
+                        "\(localeCode) width=\(width) value=\(longValue): title width collapsed (\(titleFrame.width) vs \(referenceTitleFrame.width))"
+                    )
+                    XCTAssertLessThanOrEqual(
+                        titleFrame.height,
+                        referenceTitleFrame.height + 1,
+                        "\(localeCode) width=\(width) value=\(longValue): title wrapped vertically (\(titleFrame.height) vs \(referenceTitleFrame.height))"
+                    )
+                    XCTAssertLessThanOrEqual(
+                        valueFrame.height,
+                        referenceValueFrame.height + 1,
+                        "\(localeCode) width=\(width) value=\(longValue): value wrapped vertically (\(valueFrame.height) vs \(referenceValueFrame.height))"
+                    )
+                }
+            }
+        }
+
+        // Sibling SettingsRow cases: warning capsule and captioned rows keep both title and short values readable.
+        AppLocalization.shared.preference = "en"
+        let locale = AppLocalization.locale
+        let signingRow = UIHostingController(
+            rootView: SettingsRow(title: "Signing & Updates", symbol: "signature", value: "Sign In Again", warns: true)
+                .environment(\.locale, locale)
+        )
+        XCTAssertLessThan(signingRow.sizeThatFits(in: CGSize(width: 321, height: 2_000)).height, 60)
+
+        let baselineAllowWindow = try show(
+            SettingsRow(title: "Notifications", symbol: "bell.badge", value: "Allow", valueIsAction: true)
+                .frame(width: 321)
+                .environment(\.locale, locale)
+        )
+        settle { self.accessibilityFrame(label: "Allow", in: baselineAllowWindow) != nil }
+        let baselineAllowFrame = try XCTUnwrap(accessibilityFrame(label: "Allow", in: baselineAllowWindow))
+
+        let captionedWindow = try show(
+            SettingsRow(
+                title: "Notifications",
+                caption: "Approvals and finished tasks",
+                symbol: "bell.badge",
+                value: "Allow",
+                valueIsAction: true
+            )
+            .frame(width: 321)
+            .environment(\.locale, locale)
+        )
+        settle { self.accessibilityFrame(label: "Allow", in: captionedWindow) != nil }
+        let captionedAllowFrame = try XCTUnwrap(accessibilityFrame(label: "Allow", in: captionedWindow))
+        XCTAssertGreaterThanOrEqual(captionedAllowFrame.width, baselineAllowFrame.width - 1)
+
+        let baselineScreenHistoryWindow = try show(
+            SettingsRow(
+                title: "Screen History",
+                caption: "Experimental Feature",
+                symbol: "rectangle.stack",
+                value: "Off"
+            )
+            .frame(width: 295)
+            .environment(\.locale, locale)
+        )
+        settle { self.accessibilityFrame(label: "Screen History", in: baselineScreenHistoryWindow) != nil }
+        let baselineScreenHistoryTitle = try XCTUnwrap(accessibilityFrame(label: "Screen History", in: baselineScreenHistoryWindow))
+
+        let longCaptionedWindow = try show(
+            SettingsRow(
+                title: "Screen History",
+                caption: "Experimental Feature",
+                symbol: "rectangle.stack",
+                value: "workbuddy/deepseek-v4.1-flash-extra-long-status"
+            )
+            .frame(width: 295)
+            .environment(\.locale, locale)
+        )
+        settle { self.accessibilityFrame(label: "Screen History", in: longCaptionedWindow) != nil }
+        let longCaptionedTitle = try XCTUnwrap(accessibilityFrame(label: "Screen History", in: longCaptionedWindow))
+        XCTAssertGreaterThanOrEqual(longCaptionedTitle.width, baselineScreenHistoryTitle.width - 1)
+        XCTAssertLessThanOrEqual(longCaptionedTitle.height, baselineScreenHistoryTitle.height + 1)
+    }
+
+    func testSettingsModelsRowUsesShortNameForBuiltInAndCustomSlashPrefixedModels() throws {
+        let store = storage.storage
+        try configureAllBuiltInProviders(in: store)
+        let workbuddy = CustomProviders.upsert(
+            CustomProvider(
+                name: "WorkBuddy",
+                endpoints: [CustomEndpoint(url: "http://127.0.0.1:8767/v1")],
+                model: "workbuddy/deepseek-v4.1-flash"
+            ),
+            storage: store
+        )
+        let workbuddyChoiceID = CustomProviders.choiceID(workbuddy.id, "workbuddy/deepseek-v4.1-flash")
+        ModelKeys.choose(.custom, model: workbuddyChoiceID, in: store)
+        XCTAssertEqual(ModelKeys.selectedModel(in: store), workbuddyChoiceID)
+        XCTAssertEqual(ModelKeys.selectedShortModelName(in: store), "v4.1-flash")
+
+        AppLocalization.shared.preference = "zh-Hans"
+        let app = AppModel(launcher: FakeLauncher(), pairer: FakePairing(), storage: store)
+        let chat = ChatModel(app: app)
+        defer { app.stopSession() }
+
+        let window = try show(
+            PokiDetailsView(openSetup: {}, path: .constant(NavigationPath()))
+                .environment(app)
+                .environment(chat)
+                .environment(\.locale, AppLocalization.locale)
+        )
+        settle {
+            self.accessibilityElement(identifier: "details.accountsAndModels", in: window) != nil
+        }
+        let modelRow = try XCTUnwrap(accessibilityElement(identifier: "details.accountsAndModels", in: window))
+        let rowTexts = visibleTexts(in: modelRow)
+        XCTAssertTrue(rowTexts.contains { $0.contains("模型") }, "Expected Settings Models title, got: \(rowTexts)")
+        XCTAssertTrue(rowTexts.contains { $0.contains("v4.1-flash") }, "Expected short name without workbuddy/ prefix, got: \(rowTexts)")
+        XCTAssertFalse(rowTexts.contains { $0.contains("workbuddy/") }, "Provider prefix must not appear on Settings Models row, got: \(rowTexts)")
+
+        ModelKeys.choose(.chatgpt, model: "gpt-6.1-terra", in: store)
+        settle {
+            guard let row = self.accessibilityElement(identifier: "details.accountsAndModels", in: window) else { return false }
+            return self.visibleTexts(in: row).contains { $0.contains("6.1 Terra") }
+        }
+        let updatedRow = try XCTUnwrap(accessibilityElement(identifier: "details.accountsAndModels", in: window))
+        let updatedTexts = visibleTexts(in: updatedRow)
+        XCTAssertTrue(updatedTexts.contains { $0.contains("6.1 Terra") }, "Expected short built-in model name, got: \(updatedTexts)")
+        XCTAssertFalse(updatedTexts.contains { $0.contains("ChatGPT GPT-") }, "Provider prefix must not appear on Settings Models row, got: \(updatedTexts)")
     }
 
     // MARK: Helpers
@@ -393,6 +569,28 @@ final class ModelShortNameTests: XCTestCase {
 
     private func accessibilityLabel(identifier: String, in root: NSObject) -> String? {
         accessibilityElement(identifier: identifier, in: root)?.accessibilityLabel
+    }
+
+    private func accessibilityFrame(label: String, in root: NSObject) -> CGRect? {
+        var pending = [root]
+        var visited = Set<ObjectIdentifier>()
+        while let item = pending.popLast() {
+            guard visited.insert(ObjectIdentifier(item)).inserted else { continue }
+            if item.accessibilityLabel == label, !item.accessibilityFrame.isEmpty {
+                return item.accessibilityFrame
+            }
+            if let view = item as? UIView { pending.append(contentsOf: view.subviews) }
+            if let children = item.accessibilityElements {
+                pending.append(contentsOf: children.compactMap { $0 as? NSObject })
+            }
+            let count = item.accessibilityElementCount()
+            if count > 0 && count < 1000 {
+                for index in 0..<count {
+                    if let child = item.accessibilityElement(at: index) as? NSObject { pending.append(child) }
+                }
+            }
+        }
+        return nil
     }
 
     private func visibleTexts(in root: NSObject) -> [String] {
