@@ -10,6 +10,9 @@
 #import <sys/utsname.h>
 #import <UIKit/UIKit.h>
 #import <Vision/Vision.h>
+#if POKI_BACKGROUND_MATRIX && TARGET_OS_SIMULATOR
+#import <sys/sysctl.h>
+#endif
 
 @interface NSObject (PKObservedPrivateAPI)
 - (id)initForTouchAtPoint:(CGPoint)point offset:(double)offset;
@@ -3493,3 +3496,148 @@ static NSString *PKDaemonReply(NSTimeInterval seconds, void (^send)(void (^)(NSE
 }
 
 @end
+
+#if POKI_BACKGROUND_MATRIX && TARGET_OS_SIMULATOR
+static id PKMatrixAppElement(int pid) {
+    Class type = NSClassFromString(@"XCAccessibilityElement");
+    SEL make = NSSelectorFromString(@"elementWithProcessIdentifier:");
+    if (![type respondsToSelector:make]) return nil;
+    return ((id (*)(id, SEL, int))objc_msgSend)(type, make, pid);
+}
+
+static void PKMatrixFlatten(id node, NSMutableArray *items) {
+    if (!node || items.count >= 2000) return;
+    long long type = [node elementType];
+    if (type != 50) {
+        id value = [node valueForKey:@"value"];
+        [items addObject:@{
+            @"node": node,
+            @"type": @(type),
+            @"id": [node identifier] ?: @"",
+            @"label": [node label] ?: @"",
+            @"value": [value isKindOfClass:NSString.class] ? value :
+                ([value isKindOfClass:NSNumber.class] ? [value stringValue] : @"")
+        }];
+    }
+    for (id child in [node children]) PKMatrixFlatten(child, items);
+}
+
+@implementation PKInProcess (BackgroundMatrix)
+
+- (uint64_t)matrixProcessStart:(int)pid {
+    if (pid <= 0) return 0;
+    int mib[] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, pid };
+    struct kinfo_proc info = {0};
+    size_t size = sizeof(info);
+    if (sysctl(mib, 4, &info, &size, NULL, 0) != 0 || size != sizeof(info) || info.kp_proc.p_pid != pid) return 0;
+    struct timeval start = info.kp_proc.p_starttime;
+    return (uint64_t)start.tv_sec * 1000000 + (uint64_t)start.tv_usec;
+}
+
+- (nullable NSString *)matrixBundle:(int)pid {
+    uint64_t generation = 0;
+    id proxy = [[_sessions enabledSessionWithGeneration:&generation] daemonProxy];
+    if (![proxy respondsToSelector:@selector(_XCT_requestBundleIDForPID:reply:)]) return nil;
+    __block NSString *value = nil;
+    dispatch_semaphore_t done = dispatch_semaphore_create(0);
+    [proxy _XCT_requestBundleIDForPID:pid reply:^(NSString *bundle, NSError *error) {
+        value = bundle;
+        dispatch_semaphore_signal(done);
+    }];
+    if (dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC))) return nil;
+    return value;
+}
+
+- (nullable NSDictionary<NSString *, id> *)matrixFront {
+    uint64_t generation = 0;
+    id session = [_sessions enabledSessionWithGeneration:&generation];
+    if (!session) return nil;
+    id ax = [self accessibilityFor:generation];
+    PKDisplayGeometry display = self.displayGeometry;
+    return PKBounded(PKFrontKey, 2, NULL, ^id {
+        CGRect pane = CGRectNull;
+        id element = PKForegroundElement(ax, display, &pane, ^NSString *(int pid) { return [self bundleForPID:pid session:session]; });
+        int pid = PKAXPid(element);
+        NSString *bundle = pid > 0 ? [self bundleForPID:pid session:session] : nil;
+        if (!bundle || ![self->_sessions isCurrent:session generation:generation]) return nil;
+        return @{@"pid": @(pid), @"bundleId": bundle};
+    });
+}
+
+- (BOOL)matrixHold:(int)pid {
+    uint64_t generation = 0;
+    id proxy = [[_sessions enabledSessionWithGeneration:&generation] daemonProxy];
+    SEL hold = NSSelectorFromString(@"_XCT_requestBackgroundAssertionForPID:reply:");
+    if (![proxy respondsToSelector:hold]) return NO;
+    __block BOOL granted = NO;
+    dispatch_semaphore_t done = dispatch_semaphore_create(0);
+    ((void (*)(id, SEL, int, void (^)(BOOL)))objc_msgSend)(proxy, hold, pid, ^(BOOL ok) {
+        granted = ok;
+        dispatch_semaphore_signal(done);
+    });
+    if (dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC))) return NO;
+    return granted;
+}
+
+- (nullable NSArray<NSDictionary<NSString *, id> *> *)matrixSnapshot:(int)pid {
+    uint64_t generation = 0;
+    if (![_sessions enabledSessionWithGeneration:&generation]) return nil;
+    id root = PKRequestSnapshotWithin(2, [self accessibilityFor:generation], PKMatrixAppElement(pid), 32, 800, NULL);
+    if (!root) return nil;
+    NSMutableArray *items = [NSMutableArray array];
+    PKMatrixFlatten(root, items);
+    return items;
+}
+
+- (NSString *)matrixPerform:(NSString *)operation node:(id)node pid:(int)pid processStart:(uint64_t)processStart
+                  generation:(uint64_t)generation validUntil:(NSTimeInterval)validUntil allowed:(BOOL (^)(void))allowed {
+    uint64_t live = 0;
+    id session = [_sessions enabledSessionWithGeneration:&live];
+    if (!session || live != generation) return @"identity_changed";
+    id ax = [self accessibilityFor:generation];
+    id element = [node valueForKey:@"accessibilityElement"];
+    if (!element || PKAXPid(element) != pid || [node elementType] == 50) return @"stale_ref";
+    BOOL set = [operation isEqualToString:@"set"];
+    BOOL back = [operation isEqualToString:@"back"];
+    NSInteger action = [operation isEqualToString:@"activate"] ? 2010 :
+        [operation isEqualToString:@"scroll"] ? 2006 : [operation isEqualToString:@"submit"] ? 2054 : back ? 2013 : 0;
+    if ((!set && !action) || (back && [node elementType] != 21)) return @"stale_ref";
+    SEL selector = NSSelectorFromString(set ? @"setAttribute:value:element:outError:" : @"performAction:onElement:value:error:");
+    if (![ax respondsToSelector:selector]) return @"ax_unavailable";
+    Class type = NSClassFromString(@"XCUIAccessibilityAction");
+    SEL initializer = NSSelectorFromString(@"initWithAXAction:");
+    if (!set && ![type instancesRespondToSelector:initializer]) return @"ax_unavailable";
+    NSString *answer = PKBounded(pid, 2, NULL, ^id {
+        if (!allowed()) return @"cancelled";
+        if (NSProcessInfo.processInfo.systemUptime > validUntil) return @"stale_ref";
+        if (![self->_sessions isCurrent:session generation:generation] || [self matrixProcessStart:pid] != processStart)
+            return @"identity_changed";
+        NSError *error = nil;
+        BOOL sent;
+        if (set) {
+            sent = ((BOOL (*)(id, SEL, id, id, id, NSError **))objc_msgSend)(ax, selector, @"XC_kAXXCAttributeValue", @"Poki Matrix 42", element, &error);
+        } else {
+            id request = ((id (*)(id, SEL, NSInteger))objc_msgSend)([type alloc], initializer, action);
+            if (!request) return @"ax_unavailable";
+            sent = ((BOOL (*)(id, SEL, id, id, id, NSError **))objc_msgSend)(ax, selector, request, element, nil, &error);
+        }
+        if (sent) return @"sent";
+        return [error.domain isEqualToString:NSCocoaErrorDomain] ? @"reply_timeout" : @"ax_action_refused";
+    });
+    if (![answer isEqualToString:@"sent"] || !back || !allowed()) return answer ?: @"reply_timeout";
+    id proxy = [session daemonProxy];
+    SEL layout = NSSelectorFromString(@"_XCT_fetchParameterizedAttributeForElement:attributes:parameter:reply:");
+    if ([proxy respondsToSelector:layout] && [_sessions isCurrent:session generation:generation] && [self matrixProcessStart:pid] == processStart) {
+        id app = PKMatrixAppElement(pid);
+        if (!app) return answer;
+        dispatch_semaphore_t done = dispatch_semaphore_create(0);
+        NSDictionary *audit = @{@"AXAuditClippingTest": @{@"AXAuditShouldRunTestOption": @YES}};
+        ((void (*)(id, SEL, id, id, id, void (^)(id, NSError *)))objc_msgSend)(proxy, layout, app, @95005, audit, ^(id value, NSError *error) {
+            dispatch_semaphore_signal(done);
+        });
+        dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC));
+    }
+    return answer;
+}
+@end
+#endif

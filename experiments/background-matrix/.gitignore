@@ -1,0 +1,4 @@
+/.build/
+/SimulatorSentinel/Info.plist
+/SimulatorSentinel/MatrixSentinel.xcodeproj/
+/__pycache__/

@@ -166,4 +166,16 @@ FOUNDATION_EXPORT CGPoint PKWorkspaceLauncherPoint(NSDictionary<NSString *, NSAr
 - (NSDictionary<NSString *, id> *)quietReadTrial;
 @end
 
+#if POKI_BACKGROUND_MATRIX && TARGET_OS_SIMULATOR
+@interface PKInProcess (BackgroundMatrix)
+- (uint64_t)matrixProcessStart:(int)pid;
+- (nullable NSDictionary<NSString *, id> *)matrixFront;
+- (nullable NSString *)matrixBundle:(int)pid;
+- (BOOL)matrixHold:(int)pid;
+- (nullable NSArray<NSDictionary<NSString *, id> *> *)matrixSnapshot:(int)pid;
+- (NSString *)matrixPerform:(NSString *)operation node:(id)node pid:(int)pid processStart:(uint64_t)processStart
+                  generation:(uint64_t)generation validUntil:(NSTimeInterval)validUntil allowed:(BOOL (^)(void))allowed;
+@end
+#endif
+
 NS_ASSUME_NONNULL_END

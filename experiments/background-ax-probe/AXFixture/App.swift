@@ -142,7 +142,10 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate, UITabBarControlle
         let second = SecondController(); second.tabBarItem = UITabBarItem(title: "Second", image: UIImage(systemName: "2.circle"), tag: 1)
         let swiftUI = UIHostingController(rootView: SwiftUIScreens()); swiftUI.tabBarItem = UITabBarItem(title: "SwiftUI", image: UIImage(systemName: "swift"), tag: 2)
         tabs.viewControllers = [nav, second, swiftUI]
-        w.rootViewController = ProcessInfo.processInfo.arguments.contains("-coverage") ? Coverage.makeRoot(window: w) : tabs
+        if args.contains("-matrix-level-two") {
+            nav.setViewControllers(nav.viewControllers + [LevelTwoController()], animated: false)
+        }
+        w.rootViewController = args.contains("-coverage") ? Coverage.makeRoot(window: w) : tabs
         w.makeKeyAndVisible()
         window = w
     }
@@ -220,25 +223,37 @@ class LoggingController: UIViewController {
     override func accessibilityPerformEscape() -> Bool { Fix.log("vc.escape \(title ?? "")"); return super.accessibilityPerformEscape() }
 }
 
-final class ControlsController: LoggingController, UITableViewDataSource, UITableViewDelegate {
+final class ControlsController: LoggingController, UITableViewDataSource, UITableViewDelegate, UITextFieldDelegate {
+    private var matrixOffset: UILabel?
     override func viewDidLoad() {
         super.viewDidLoad()
         title = "Controls"; view.backgroundColor = .systemBackground
-        navigationItem.rightBarButtonItem = UIBarButtonItem(title: "Bar", style: .plain, target: self, action: #selector(bar))
+        let matrix = ProcessInfo.processInfo.arguments.contains("-matrix-controls")
+        navigationItem.rightBarButtonItem = UIBarButtonItem(title: "Bar", style: .plain, target: self, action: matrix ? #selector(matrixBar) : #selector(bar))
         let label = UILabel(); label.accessibilityIdentifier = "lastEvent"; label.text = "0 start"; Fix.label = label
         let focusLabel = UILabel(); focusLabel.accessibilityIdentifier = "focusNow"; focusLabel.text = "none"; Fix.focusLabel = focusLabel; focusLabel.font = .systemFont(ofSize: 9)
         let sceneLabel = UILabel(); sceneLabel.accessibilityIdentifier = "sceneId"; sceneLabel.text = "scene"; Fix.sceneLabel = sceneLabel; sceneLabel.font = .systemFont(ofSize: 9)
         let button = UIButton(type: .system); button.setTitle("Plain button", for: .normal); button.addTarget(self, action: #selector(plain), for: .primaryActionTriggered); Fix.plainButton = button
+        if matrix || ProcessInfo.processInfo.arguments.contains("-matrix-level-two") { button.accessibilityIdentifier = "matrix.plain" }
         let push = UIButton(type: .system); push.setTitle("Push level 2", for: .normal); push.addTarget(self, action: #selector(pushNext), for: .primaryActionTriggered)
         let sw = UISwitch(); sw.accessibilityLabel = "Switch"; sw.addTarget(self, action: #selector(switched(_:)), for: .valueChanged)
         let seg = UISegmentedControl(items: ["One", "Two", "Three"]); seg.selectedSegmentIndex = 0; seg.addTarget(self, action: #selector(segmented(_:)), for: .valueChanged)
         let slider = UISlider(); slider.accessibilityLabel = "Slider"; slider.addTarget(self, action: #selector(slid(_:)), for: .valueChanged)
         let field = UITextField(); field.borderStyle = .roundedRect; field.placeholder = "Field"; field.accessibilityIdentifier = "field"; field.addTarget(self, action: #selector(edited(_:)), for: .editingChanged)
+        if matrix { field.delegate = self }
         let alert = UIButton(type: .system); alert.setTitle("Show alert", for: .normal); alert.addTarget(self, action: #selector(showAlert), for: .primaryActionTriggered)
         let sheet = UIButton(type: .system); sheet.setTitle("Show sheet", for: .normal); sheet.addTarget(self, action: #selector(showSheet), for: .primaryActionTriggered)
         let probe = ProbeTarget()
         let table = UITableView(); table.dataSource = self; table.delegate = self; table.accessibilityIdentifier = "bigTable"; table.delegate = self
         let stack = UIStackView(arrangedSubviews: [label, focusLabel, sceneLabel, probe, button, push, sw, seg, slider, field, alert, sheet])
+        if matrix {
+            let offset = UILabel()
+            offset.accessibilityIdentifier = "matrix.scroll.offset"
+            offset.text = "0"
+            offset.font = .systemFont(ofSize: 9)
+            stack.insertArrangedSubview(offset, at: 1)
+            matrixOffset = offset
+        }
         stack.axis = .vertical; stack.spacing = 6
         stack.translatesAutoresizingMaskIntoConstraints = false; table.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(stack); view.addSubview(table)
@@ -271,6 +286,7 @@ final class ControlsController: LoggingController, UITableViewDataSource, UITabl
     }
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) { Fix.log("pressesBegan type=\(presses.first?.type.rawValue ?? -1) key=\(presses.first?.key?.characters ?? "-")"); super.pressesBegan(presses, with: event) }
     @objc func bar() { Fix.log("barButton -> push level 2"); navigationController?.pushViewController(LevelTwoController(), animated: true) }
+    @objc func matrixBar() { Fix.log("matrix bar") }
     @objc func plain() { Fix.log("button"); NSLog("FIXLOG stack %@", Thread.callStackSymbols.prefix(40).joined(separator: " | ")) }
     @objc func pushNext() { Fix.log("push.requested"); navigationController?.pushViewController(LevelTwoController(), animated: true) }
     @objc func switched(_ s: UISwitch) { Fix.log("switch \(s.isOn)") }
@@ -290,10 +306,16 @@ final class ControlsController: LoggingController, UITableViewDataSource, UITabl
     func tableView(_ t: UITableView, numberOfRowsInSection s: Int) -> Int { 500 }
     func tableView(_ t: UITableView, cellForRowAt i: IndexPath) -> UITableViewCell {
         let c = t.dequeueReusableCell(withIdentifier: "c") ?? UITableViewCell(style: .default, reuseIdentifier: "c")
-        c.textLabel?.text = "Row \(i.row)"; return c
+        c.textLabel?.text = "Row \(i.row)"
+        return c
     }
     func tableView(_ t: UITableView, didSelectRowAt i: IndexPath) { Fix.log("row.select \(i.row)") }
-    func scrollViewDidScroll(_ s: UIScrollView) { if Int(s.contentOffset.y) % 200 < 20 { Fix.log("table.scroll \(Int(s.contentOffset.y))") } }
+    func scrollViewDidScroll(_ s: UIScrollView) {
+        let offset = Int(s.contentOffset.y)
+        matrixOffset?.text = String(offset)
+        if offset % 200 < 20 { Fix.log("table.scroll \(offset)") }
+    }
+    func textFieldShouldReturn(_ textField: UITextField) -> Bool { Fix.log("return"); return true }
 }
 
 final class LevelTwoController: LoggingController {

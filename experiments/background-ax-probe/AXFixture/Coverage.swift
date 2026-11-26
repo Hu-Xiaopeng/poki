@@ -17,6 +17,9 @@ enum Coverage {
                 UITab(title: "Web", image: UIImage(systemName: "globe"), identifier: "tab.web") { _ in WebCoverageController() },
             ]
             tabs.delegate = TabLogger.shared
+            let args = ProcessInfo.processInfo.arguments
+            if args.contains("-matrix-swiftui") { tabs.selectedTab = tabs.tabs[2] }
+            if args.contains("-matrix-web") { tabs.selectedTab = tabs.tabs[3] }
             root = tabs
         } else {
             root = UITabBarController()

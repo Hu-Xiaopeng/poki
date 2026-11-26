@@ -1,0 +1,20 @@
+name: MatrixSentinel
+options:
+  deploymentTarget:
+    iOS: "18.0"
+targets:
+  MatrixSentinel:
+    type: application
+    platform: iOS
+    sources: [main.swift]
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: Matrix Sentinel
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: local.pokimcp.matrixsentinel
+        TARGETED_DEVICE_FAMILY: "1"

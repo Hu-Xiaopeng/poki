@@ -1,0 +1,22 @@
+include: project-external.yml
+name: PokiLab
+packages:
+  BackgroundMatrix:
+    path: ../../experiments/background-matrix
+settings:
+  base:
+    POKI_BUNDLE_ID: nz.zheha.poki.lab
+    POKI_APP_GROUP: group.nz.zheha.poki.lab
+    POKI_DISPLAY_NAME: Poki Lab
+    TARGETED_DEVICE_FAMILY: "1"
+    POKI_MATRIX_SWIFT_FLAG: ""
+    POKI_MATRIX_NATIVE_FLAG: ""
+targets:
+  Poki:
+    dependencies:
+      - package: BackgroundMatrix
+    settings:
+      configs:
+        Debug:
+          "SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphonesimulator*]": $(inherited) POKI_APP $(POKI_MATRIX_SWIFT_FLAG)
+          "GCC_PREPROCESSOR_DEFINITIONS[sdk=iphonesimulator*]": $(inherited) $(POKI_MATRIX_NATIVE_FLAG)
