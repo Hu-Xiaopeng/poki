@@ -55,12 +55,19 @@ static NSString *fixtureMode;
 
 @interface XCPointerEventPath : NSObject
 @property(nonatomic) CGPoint start;
+@property(nonatomic, copy) NSString *typedText;
 - (instancetype)initForTouchAtPoint:(CGPoint)start offset:(double)offset;
+- (instancetype)initForTextInput;
+- (void)typeText:(NSString *)text atOffset:(double)offset typingSpeed:(NSUInteger)speed shouldRedact:(BOOL)redact;
 @end
 @implementation XCPointerEventPath
 - (instancetype)initForTouchAtPoint:(CGPoint)start offset:(double)offset {
     if ((self = [super init])) _start = start;
     return self;
+}
+- (instancetype)initForTextInput { return [super init]; }
+- (void)typeText:(NSString *)text atOffset:(double)offset typingSpeed:(NSUInteger)speed shouldRedact:(BOOL)redact {
+    self.typedText = text;
 }
 - (void)moveToPoint:(CGPoint)point atOffset:(double)offset {}
 - (void)liftUpAtOffset:(double)offset {}
@@ -534,10 +541,15 @@ static BOOL checkCompatibilityCompanion(PKDisplayGeometry scene, CGSize crop, BO
     scene.peer.origin.x = targetRight ? 482 : 0;
     CompanionFixture *runner = companion(scene);
     runner.ownOnRight = !targetRight;
-    AXNode *root = [AXNode new], *window = [AXNode new];
+    AXNode *root = [AXNode new], *window = [AXNode new], *field = [AXNode new];
     root.elementType = 2;
     window.elementType = 4;
+    field.elementType = 49; // TextField
     root.frame = window.frame = CGRectMake(0, 0, 375, 667);
+    field.frame = CGRectMake(30, 45, 240, 35);
+    field.label = @"Search";
+    field.hasKeyboardFocus = YES;
+    window.children = @[field];
     root.children = @[window];
     runner.snapshot = root;
 
@@ -549,13 +561,46 @@ static BOOL checkCompatibilityCompanion(PKDisplayGeometry scene, CGSize crop, BO
     NSString *code = nil;
     NSString *xml = [runner sourceXML:NULL code:&code];
     if (![xml containsString:@"screenCoordinates=\"unavailable\""] || [xml containsString:@"width=\"375\""] ||
+        ![xml containsString:@"label=\"Search\" value=\"\" x=\"0\" y=\"0\" width=\"0\" height=\"0\" keyboardFocused=\"true\""] ||
         !CGRectEqualToRect(runner.viewport, scene.peer)) {
         NSLog(@"%@ exposed app-local elements or lost the confirmed crop: %@", stage, code);
         return NO;
     }
+    ReadySession *session = [runner valueForKey:@"sessions"];
+    if (targetRight && ![mode isEqualToString:@"automatic"]) {
+        // Both a landscape legacy window and a keyboard window spanning the right pane leave
+        // PKCompanionTreeOffset at 0; selectedPaneHasKeyboardFocus must still accept the focused field.
+        root.frame = window.frame = CGRectMake(0, 0, 667, 375);
+        session.gesture = nil;
+        PKOutcome *landscapeType = [runner type:@"Duo" timeout:1];
+        if (landscapeType.delivery != PKDeliverySent || ![session.gesture.path.typedText isEqualToString:@"Duo"]) {
+            NSLog(@"%@ failed typing in landscape legacy window: %@", stage, landscapeType.code);
+            return NO;
+        }
+        root.frame = window.frame = CGRectMake(0, 0, 375, 667);
+        AXNode *keyboardWindow = [AXNode new];
+        keyboardWindow.elementType = 4;
+        keyboardWindow.frame = scene.peer;
+        root.children = @[window, keyboardWindow];
+        session.gesture = nil;
+        PKOutcome *keyboardType = [runner type:@"Right" timeout:1];
+        if (keyboardType.delivery != PKDeliverySent || ![session.gesture.path.typedText isEqualToString:@"Right"]) {
+            NSLog(@"%@ failed typing with right-pane keyboard window: %@", stage, keyboardType.code);
+            return NO;
+        }
+        field.hasKeyboardFocus = NO;
+        session.gesture = nil;
+        PKOutcome *unfocusedType = [runner type:@"No" timeout:1];
+        if (unfocusedType.delivery != PKDeliveryNotSent || ![unfocusedType.code isEqualToString:@"split_view_focus_unconfirmed"] || session.gesture) {
+            NSLog(@"%@ accepted typing without keyboard focus: %@", stage, unfocusedType.code);
+            return NO;
+        }
+        field.hasKeyboardFocus = YES;
+        root.children = @[window];
+        if (!checkShot(runner, 2, crop, 255, [stage stringByAppendingString:@" after typing"], YES)) return NO;
+    }
     CGPoint point = CGPointMake(targetRight ? 818 : 430, 80);
     PKOutcome *tap = compatibilityTap(runner, point, runner.displayGeometry);
-    ReadySession *session = [runner valueForKey:@"sessions"];
     return tap.delivery == PKDeliverySent && session.gesture.displayID == 2 &&
            CGPointEqualToPoint(session.gesture.path.start, CGPointMake(point.y, 951 - point.x));
 }
@@ -577,7 +622,11 @@ static BOOL checkCompatibilityWindow(PKDisplayGeometry coverScene, CGSize innerP
     field.frame = CGRectMake(30, 45, 240, 35);
     field.hasKeyboardFocus = YES;
     field.value = @"Duo";
-    first.children = @[button, field];
+    AXNode *emptyField = [AXNode new];
+    emptyField.elementType = 49; // TextField with nil value (real XCElementSnapshot empty field)
+    emptyField.frame = CGRectMake(30, 90, 240, 35);
+    emptyField.label = @"Notes";
+    first.children = @[button, field, emptyField];
     root.children = @[first, second];
     runner.wechatSnapshot = root;
     runner.compatibilityDisplayIDs = @[@2, @2, @2];
@@ -589,6 +638,7 @@ static BOOL checkCompatibilityWindow(PKDisplayGeometry coverScene, CGSize innerP
     NSString *xml = [runner sourceXML:&focus code:&code];
     if (![xml containsString:@"screenCoordinates=\"unavailable\""] ||
         ![xml containsString:@"label=\"Search\" x=\"0\" y=\"0\" width=\"0\" height=\"0\""] ||
+        ![xml containsString:@"label=\"Notes\" value=\"\" x=\"0\" y=\"0\" width=\"0\" height=\"0\""] ||
         ![xml containsString:@"keyboardFocused=\"true\""] ||
         ![focus[@"value"] isEqual:@"Duo"] || ![focus[@"width"] isEqual:@0]) {
         printf("FAIL app-local compatibility coordinates were exposed as screenshot coordinates\n");
@@ -685,7 +735,19 @@ static BOOL checkCompatibilityWindow(PKDisplayGeometry coverScene, CGSize innerP
     PKOutcome *coverTap = compatibilityTap(runner, portraitPoint, runner.displayGeometry);
     if (coverTap.delivery != PKDeliverySent || session.gesture.displayID != 1 ||
         !CGPointEqualToPoint(session.gesture.path.start, portraitPoint)) return NO;
+    // Install a non-nil workspace directly so selectPane:@"auto" truly exercises setWorkspace:nil,
+    // and assert _duoCompatibilityPID is cleared without relying on pokiVisible = YES.
+    [runner setValue:[NSClassFromString(@"PKWorkspace") new] forKey:@"_workspace"];
+    if (!runner.hasSelectedPane || [[runner valueForKey:@"_duoCompatibilityPID"] intValue] != runner.wechat.processIdentifier) {
+        printf("FAIL workspace-clear regression setup did not retain compatibility PID\n");
+        return NO;
+    }
     [runner selectPane:@"auto" code:NULL];
+    if (runner.hasSelectedPane || [[runner valueForKey:@"_duoCompatibilityPID"] intValue] != 0 ||
+        [[runner valueForKey:@"_duoPanelGeneration"] unsignedLongLongValue] != 0) {
+        printf("FAIL clearing the selected workspace did not reset _duoCompatibilityPID via setWorkspace:\n");
+        return NO;
+    }
     runner.pokiVisible = YES;
     runner.foregroundDuringCapture = newForeground;
     return checkShot(runner, 1, coverPixels, 0, @"Poki in front after clearing the selected workspace", YES);

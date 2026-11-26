@@ -71,11 +71,11 @@ final class Computer: @unchecked Sendable {
     var lastAll: [Element] = [] {
         didSet {
             currentBackTarget = BackTarget(in: lastAll)
-            lastUnpositionedSecureField = nil
+            lastUnpositioned = UnpositionedScreen()
         }
     }
-    /// On a legacy screen, AX can still identify password fields independently of their positions.
-    var lastUnpositionedSecureField: Bool?
+    /// On a legacy screen, AX can still identify password fields and delete menus/dialogs independently of positions.
+    var lastUnpositioned = UnpositionedScreen()
     private(set) var currentBackTarget = BackTarget(in: [])
     /// When the latest tree was read (a `wait_until: settled` takes a fresh one as its first sample).
     var lastTreeAt: Double?
@@ -201,7 +201,7 @@ final class Computer: @unchecked Sendable {
     var fixesMade = 0
 
     var lastElements: [Element] { listed.map(\.element) }
-    var lastScreenHasSecureField: Bool { lastUnpositionedSecureField == true || lastElements.contains(where: \.isSecure) }
+    var lastScreenHasSecureField: Bool { lastUnpositioned.hasSecureField || lastElements.contains(where: \.isSecure) }
     var layout: Layout { Layout(all: lastAll, screen: size ?? ScreenSize(width: 10_000, height: 10_000)) }
 
     static let settle: [String: Double] = ["tap": 0.45, "type": 0.25, "key": 0.3, "swipe": 0.6, "drag": 0.35, "adjust": 0.2, "long_press": 0.4, "pinch": 0.6, "button": 0.7, "launch": 0.9, "scroll_to": 0.2, "wait": 0, "wait_until": 0, "run_read": 0]
@@ -288,9 +288,9 @@ final class Computer: @unchecked Sendable {
         let screen = size ?? ScreenSize(width: 10_000, height: 10_000)
         if reading.coordinatesUnavailable {
             refs = [:]; listed = []; lastAll = []; lastTreeAt = nil
-            lastUnpositionedSecureField = reading.hasUnpositionedSecureField
+            lastUnpositioned = reading.unpositioned
         } else if let app = reading.foreground?.bundleID, app != lastForeground?.bundleID {
-            lastUnpositionedSecureField = nil
+            lastUnpositioned = UnpositionedScreen()
         }
         var notes = reading.notes
         if let modal = modalOnly(reading.elements) { notes.append(modal) }
@@ -471,7 +471,10 @@ final class Computer: @unchecked Sendable {
         } else {
             refs = [:]
             listed = []
-            for (i, e) in shown.enumerated() { refs[assigned[i]!] = e }
+            for (i, e) in shown.enumerated() {
+                refs[assigned[i]!] = e
+                listed.append((assigned[i]!, e))
+            }
         }
 
         func line(_ ref: Int, _ e: Element, _ mark: String) -> String {
@@ -2803,6 +2806,9 @@ final class Computer: @unchecked Sendable {
         var moved = false
         var typingTarget: Element?
         var secureOnScreen: Bool
+        /// Whether OCR-only targets should require deletion approval because the screen has a
+        /// menu/confirmation dialog or no positioned accessibility tree to rule one out.
+        var ocrDeletesRequireApproval = false
         /// The elements to look under a point in; nil for the latest read (and its numbers).
         var elements: [Element]?
         /// The full element tree for ancestor context; nil uses `lastAll`.
@@ -2813,7 +2819,14 @@ final class Computer: @unchecked Sendable {
     /// `rules`: judged by these instead of the ones the way of asking leaves (`stopsWhenOff`).
     func sensitiveSteps(_ actions: [JSON], under rules: SensitivityRules? = nil) -> [(at: Int, reason: String)] {
         guard config.sensitive.enabled else { return [] }
-        var scan = SensitiveScan(front: lastForeground, secureOnScreen: lastScreenHasSecureField)
+        let ocrDeletesRequireApproval = lastUnpositioned.active
+            ? lastUnpositioned.hasDeleteMenuOrDialog
+            : lastAll.isEmpty
+        var scan = SensitiveScan(
+            front: lastForeground,
+            secureOnScreen: lastScreenHasSecureField,
+            ocrDeletesRequireApproval: ocrDeletesRequireApproval
+        )
         var matches: [(at: Int, reason: String)] = []
         for (at, action) in actions.enumerated() {
             if let reason = sensitive(action, &scan, under: rules) { matches.append((at, reason)) }
@@ -2912,7 +2925,17 @@ final class Computer: @unchecked Sendable {
         let spec = action[kind.rawValue] ?? .null
         if kind == .drag, spec["to_pane"] != nil, let destination = selectedPane?.other,
            destination != "com.apple.mobilenotes" { return "dropping content into \(destination)" }
-        let tree = scan.read ? (scan.allElements ?? lastAll) : []
+        let tree: [Element]? = if !scan.read {
+            []
+        } else if let all = scan.allElements {
+            all
+        } else if !lastAll.isEmpty {
+            lastAll
+        } else if scan.ocrDeletesRequireApproval {
+            nil
+        } else {
+            []
+        }
         if kind == .tap { scan.typingTarget = unread ? nil : target(spec, in: scan.elements) }
         for press in presses(kind, action, scan, unread: unread) {
             if let r = rules.reason(touching: press.element, typing: false, app: press.judged == .stroke ? nil : scan.front, secureOnScreen: scan.secureOnScreen, in: tree) { return r }

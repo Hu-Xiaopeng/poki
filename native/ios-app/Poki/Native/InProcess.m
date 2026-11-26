@@ -810,8 +810,14 @@ static id PKDuoScreenForCompatibilityWindow(id ax, id element, CGRect window, CG
     }
     if (!confirmedWindow) return nil;
 
+    Class screenType = NSClassFromString(@"XCUIScreen");
+    NSArray *screens = [screenType respondsToSelector:@selector(screens)] ? [(id)screenType screens] : nil;
+    if (!screens.count) {
+        id mainScreen = [screenType respondsToSelector:@selector(mainScreen)] ? [screenType mainScreen] : nil;
+        screens = mainScreen ? @[mainScreen] : @[];
+    }
     id matched = nil;
-    for (id screen in [NSClassFromString(@"XCUIScreen") screens]) {
+    for (id screen in screens) {
         if (PKDuoDisplayID(screen) != displayID) continue;
         if (matched) return nil;
         matched = screen;
@@ -1933,6 +1939,10 @@ static BOOL PKSameWorkspace(PKWorkspace *a, PKWorkspace *b) {
     CGRect pane = observed.CGRectValue;
     if ([info[@"paneLocal"] boolValue]) pane.origin = CGPointZero;
     CGFloat offset = PKCompanionTreeOffset(root, self.displayGeometry, pane);
+    BOOL legacyWindow = NO;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 270100
+    legacyWindow = PKIsDuo() && PKDuoIsLegacyWindow([root frame]);
+#endif
     NSMutableArray *nodes = [NSMutableArray arrayWithObject:root];
     while (nodes.count) {
         id node = nodes.lastObject;
@@ -1941,7 +1951,7 @@ static BOOL PKSameWorkspace(PKWorkspace *a, PKWorkspace *b) {
         if ([type hasSuffix:@"Field"] || [type isEqualToString:@"TextView"]) {
             BOOL focused = [node respondsToSelector:@selector(hasKeyboardFocus)] ? [node hasKeyboardFocus] :
                 !companionTask && [node respondsToSelector:@selector(hasFocus)] && [node hasFocus];
-            if (focused && CGRectIntersectsRect(CGRectOffset([node frame], offset, 0), pane))
+            if (focused && (legacyWindow || CGRectIntersectsRect(CGRectOffset([node frame], offset, 0), pane)))
                 return workspace == self.selectedWorkspace && companionTask == self.duoCompanionTask;
         }
         NSArray *children = [node children];
@@ -3013,7 +3023,7 @@ CGPoint PKWorkspaceLauncherPoint(NSDictionary<NSString *, NSArray<NSValue *> *> 
             [xml appendFormat:@"<%@ type=\"%@\"", type, type];
             if (name.length) [xml appendFormat:@" name=\"%@\"", PKEscape(name)];
             if (label.length) [xml appendFormat:@" label=\"%@\"", PKEscape(label)];
-            if (value.length || (coordinatesUnavailable && textField && value)) [xml appendFormat:@" value=\"%@\"", PKEscape(value)];
+            if (value.length || (coordinatesUnavailable && textField)) [xml appendFormat:@" value=\"%@\"", PKEscape(value ?: @"")];
             if (coordinatesUnavailable || CGRectIsNull(f) || CGRectIsInfinite(f)) f = CGRectZero;
             else {
                 if (paneRead) f = CGRectIntersection(CGRectOffset(f, treeOffset, 0), clip);

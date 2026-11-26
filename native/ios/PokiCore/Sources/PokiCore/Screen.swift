@@ -113,6 +113,26 @@ struct ScreenCapture: Sendable {
     let finishedAt: Double
 }
 
+/// Semantic accessibility facts retained from a screen whose element frames are app-local
+/// and therefore unusable for screen-space touch coordinates.
+struct UnpositionedScreen: Equatable, Sendable {
+    var active = false
+    var hasSecureField = false
+    var hasDeleteMenuOrDialog = false
+
+    init(active: Bool = false, hasSecureField: Bool = false, hasDeleteMenuOrDialog: Bool = false) {
+        self.active = active
+        self.hasSecureField = hasSecureField
+        self.hasDeleteMenuOrDialog = hasDeleteMenuOrDialog
+    }
+
+    init(elements: [Element]) {
+        self.active = true
+        self.hasSecureField = elements.contains(where: \.isSecure)
+        self.hasDeleteMenuOrDialog = elements.isEmpty || SensitivityRules.hasDeleteMenuOrDialog(in: elements)
+    }
+}
+
 /// One read of the screen. Either part may be missing; `notes` says why.
 public struct Reading: Sendable {
     public var elements: [Element] = []
@@ -122,8 +142,8 @@ public struct Reading: Sendable {
     var firstPictureStartedAt: Double?
     var firstPictureAt: Double?
     var treeAt: Double?
-    var coordinatesUnavailable = false
-    var hasUnpositionedSecureField = false
+    var unpositioned = UnpositionedScreen()
+    var coordinatesUnavailable: Bool { unpositioned.active }
     public var notes: [String] = []
     public var ms = 0
 
@@ -135,8 +155,7 @@ public struct Reading: Sendable {
     fileprivate mutating func use(_ tree: SourceTree) {
         foreground = tree.foreground
         if tree.coordinatesUnavailable {
-            coordinatesUnavailable = true
-            hasUnpositionedSecureField = tree.elements.contains(where: \.isSecure)
+            unpositioned = UnpositionedScreen(elements: tree.elements)
             notes.append("the app reports local coordinates; use the screenshot for positions")
         } else {
             elements = tree.elements

@@ -1615,12 +1615,17 @@ extension Computer {
                 if let tree = try? await runner.tree(timeout: min(config.readTimeout, max(0.3, until - now() - 0.1)), format: config.treeFormat,
                                                      includeUnpositioned: ActionKind(action) == .type) {
                     lastAll = tree.coordinatesUnavailable ? [] : tree.elements
-                    if tree.coordinatesUnavailable { lastUnpositionedSecureField = tree.elements.contains(where: \.isSecure) }
+                    if tree.coordinatesUnavailable { lastUnpositioned = UnpositionedScreen(elements: tree.elements) }
                     lastForeground = tree.foreground
                     front = tree.foreground ?? front
                     read = true
                     let elements = listable(lastAll, screen)
-                    scan = SensitiveScan(front: front, secureOnScreen: lastUnpositionedSecureField == true || elements.contains(where: \.isSecure), elements: elements)
+                    scan = SensitiveScan(
+                        front: front,
+                        secureOnScreen: lastUnpositioned.hasSecureField || elements.contains(where: \.isSecure),
+                        ocrDeletesRequireApproval: lastUnpositioned.active ? lastUnpositioned.hasDeleteMenuOrDialog : lastAll.isEmpty,
+                        elements: elements
+                    )
                 }
             }
             if ActionKind(action)?.movesScreen == true {

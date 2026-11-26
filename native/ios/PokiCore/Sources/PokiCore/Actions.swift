@@ -506,11 +506,11 @@ extension Computer {
         var before: String?
         if clear {
             let seen = await fieldOnScreen(target: target, timeout: 1.5)
-            if seen.coordinatesUnavailable || (!seen.came && lastUnpositionedSecureField != nil) {
-                guard let value = seen.field?.value else {
+            if seen.coordinatesUnavailable || (!seen.came && lastUnpositioned.active) {
+                guard let field = seen.field else {
                     throw ActionFailure(message: "clear needs a readable focused field; nothing was typed", delivery: .notSent)
                 }
-                before = value
+                before = field.value ?? ""
             } else {
                 before = seen.field.map { $0.value ?? "" }
             }
