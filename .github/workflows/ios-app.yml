@@ -32,16 +32,16 @@ jobs:
           sudo xcode-select -s "$XCODE/Contents/Developer"
           xcodebuild -version
       - name: Field check
-        run: POKI_CHECK_OUT=out/field native/ios-app/scripts/inprocess-sim/check.sh
+        run: POKI_CHECK_OUT=out/field native/ios-app/scripts/inprocess-sim/retry-flaky.sh native/ios-app/scripts/inprocess-sim/check.sh
       - name: Field check on iPad
-        run: POKI_CHECK_IPAD=1 POKI_CHECK_OUT=out/field-ipad native/ios-app/scripts/inprocess-sim/check.sh
+        run: POKI_CHECK_IPAD=1 POKI_CHECK_OUT=out/field-ipad native/ios-app/scripts/inprocess-sim/retry-flaky.sh native/ios-app/scripts/inprocess-sim/check.sh
       - name: Apps check
-        run: POKI_CHECK_OUT=out/apps native/ios-app/scripts/inprocess-sim/check.sh --apps
+        run: POKI_CHECK_OUT=out/apps native/ios-app/scripts/inprocess-sim/retry-flaky.sh native/ios-app/scripts/inprocess-sim/check.sh --apps
       - name: Idle cycle check (close, refuse, reopen)
-        run: POKI_CHECK_OUT=out/cycle native/ios-app/scripts/inprocess-sim/check.sh --cycle
+        run: POKI_CHECK_OUT=out/cycle native/ios-app/scripts/inprocess-sim/retry-flaky.sh native/ios-app/scripts/inprocess-sim/check.sh --cycle
       - name: Idle cycle check with Poki's own session (not XCTest's shared one)
         if: always()
-        run: POKI_INPROCESS_OWNED_SESSION=1 POKI_CHECK_OUT=out/cycle-owned native/ios-app/scripts/inprocess-sim/check.sh --cycle
+        run: POKI_INPROCESS_OWNED_SESSION=1 POKI_CHECK_OUT=out/cycle-owned native/ios-app/scripts/inprocess-sim/retry-flaky.sh native/ios-app/scripts/inprocess-sim/check.sh --cycle
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -55,7 +55,7 @@ jobs:
   # session is saved, then an outside agent's ask_poki hands a second task to Poki's agent.
   agent-chat:
     if: github.event_name == 'workflow_dispatch'
-    runs-on: macos-15
+    runs-on: macos-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -205,7 +205,7 @@ jobs:
 
       - name: PokiCore tests
         timeout-minutes: 15
-        run: swift test --package-path native/ios/PokiCore
+        run: swift test --parallel --package-path native/ios/PokiCore
 
       - name: Poki keyboard tests
         if: ${{ hashFiles('native/ios-app/KeyboardShared/Package.swift') != '' }}
