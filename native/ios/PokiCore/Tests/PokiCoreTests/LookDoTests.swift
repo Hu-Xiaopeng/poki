@@ -5,6 +5,39 @@ import XCTest
 /// slow drags, no-op actions that looked like success, the picture's scale, collapsed cells, fixed
 /// waits and repeated text.
 final class LookDoTests: XCTestCase {
+    func testExplicitSplitViewWithLocalCoordinatesUsesOCRAndPreservesTyping() async {
+        let (core, wda, host) = makeCore(FakeWDA(dynamicSize: true, paneSelection: true)) {
+            $0.treeFormat = "xml"
+        }
+        wda.set("POST /poki/pane") { _ in
+            (200, ["value": ["identity": "right/duo", "bundleId": "local.legacy", "otherBundleId": "local.other", "x": 482, "y": 0]])
+        }
+        wda.set("GET /wda/screen") { _ in (200, ["value": ["screenSize": ["width": 469, "height": 669]]]) }
+        let front = LockedBox("local.legacy")
+        wda.set("GET /wda/activeAppInfo") { _ in (200, ["value": ["bundleId": .string(front.value)]]) }
+        let typed = LockedBox(false)
+        wda.set("POST /wda/keys") { _ in typed.value = true; return (200, ["value": .null]) }
+        wda.set("GET /source") { _ in
+            (200, ["value": .string("""
+                <AppiumAUT screenCoordinates="unavailable"><XCUIElementTypeApplication>
+                <XCUIElementTypeTextField label="Unpositioned field" value="\(typed.value ? "Duo" : "")" x="40" y="50" width="80" height="30"/>
+                <XCUIElementTypeKeyboard/>
+                </XCUIElementTypeApplication></AppiumAUT>
+                """)])
+        }
+        host.texts.value = [RecognizedText(text: "Search", box: Rect(x: 0.5, y: 0.1, width: 0.1, height: 0.1))]
+        let read = await core.call("look", ["pane": "right"], session: "workspace-owner")
+        XCTAssertTrue(read.text.contains("read from the picture"), read.text)
+        XCTAssertFalse(read.text.contains("Unpositioned field"), read.text)
+        let typedResult = await core.call("do", ["actions": [["type": "Duo"]]], session: "workspace-owner")
+        XCTAssertEqual(wda.bodies("POST /wda/keys").count, 1, typedResult.text)
+        XCTAssertTrue(typedResult.text.contains("the field now reads \"Duo\""), typedResult.text)
+        front.value = "local.other"
+        let changed = await core.call("look", ["pane": "right"], session: "workspace-owner")
+        XCTAssertTrue(changed.isError, changed.text)
+        XCTAssertNil(changed.jpeg)
+    }
+
     func testDuoCompanionKeepsOnlyThePictureProvenForTheSelectedPaneWhenAccessibilityIsHeld() async {
         let (core, wda, _) = makeCore(FakeWDA(dynamicSize: true, paneSelection: true)) { $0.humanize = false }
         wda.set("POST /poki/pane") { _ in

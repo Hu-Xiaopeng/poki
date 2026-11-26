@@ -99,6 +99,7 @@ public struct Reading: Sendable {
     var firstPictureStartedAt: Double?
     var firstPictureAt: Double?
     var treeAt: Double?
+    var coordinatesUnavailable = false
     public var notes: [String] = []
     public var ms = 0
 
@@ -142,7 +143,7 @@ func flatten(_ root: JSON) -> [Element] {
 
 /// WDA's XML source (`<AppiumAUT><XCUIElementTypeApplication …><XCUIElementTypeButton name label
 /// value x y width height …/>…`) as the same flat list. The wrapper element is not counted.
-func flattenXML(_ data: Data) -> (elements: [Element], root: (label: String?, name: String?))? {
+func flattenXML(_ data: Data) -> (elements: [Element], root: (label: String?, name: String?), coordinatesUnavailable: Bool)? {
     final class Walker: NSObject, XMLParserDelegate {
         var out: [Element] = []
         var counter = 0
@@ -150,8 +151,12 @@ func flattenXML(_ data: Data) -> (elements: [Element], root: (label: String?, na
         var depth = -1
         var root: (label: String?, name: String?) = (nil, nil)
         var failed = false
+        var coordinatesUnavailable = false
         func parser(_ parser: XMLParser, didStartElement name: String, namespaceURI: String?, qualifiedName: String?, attributes: [String: String]) {
-            guard name != "AppiumAUT" else { return }
+            if name == "AppiumAUT" {
+                coordinatesUnavailable = attributes["screenCoordinates"] == "unavailable"
+                return
+            }
             depth += 1
             counter += 1
             let place = counter
@@ -159,11 +164,12 @@ func flattenXML(_ data: Data) -> (elements: [Element], root: (label: String?, na
             let visible = attributes["visible"].map { $0 == "true" } ?? true
             if depth == 0 { root = (attributes["label"], attributes["name"]) }
             var index: Int?
-            if depth > 0, visible, frame.width > 0, frame.height > 0 {
+            if depth > 0, visible, coordinatesUnavailable || (frame.width > 0 && frame.height > 0) {
                 let type = name.replacingOccurrences(of: "XCUIElementType", with: "")
                 let id = attributes["name"]
                 index = out.count
-                out.append(Element(type: type, label: attributes["label"] ?? id, value: attributes["value"], identifier: id, frame: frame, depth: depth, node: place, end: place,
+                let position = coordinatesUnavailable ? Rect(x: 0, y: 0, width: 0, height: 0) : frame
+                out.append(Element(type: type, label: attributes["label"] ?? id, value: attributes["value"], identifier: id, frame: position, depth: depth, node: place, end: place,
                                    isDisabled: reportsDisabled(attributes["enabled"])))
             }
             open.append(index)
@@ -180,7 +186,7 @@ func flattenXML(_ data: Data) -> (elements: [Element], root: (label: String?, na
     parser.delegate = walker
     parser.parse()
     guard !walker.failed || !walker.out.isEmpty else { return nil }
-    return (walker.out, walker.root)
+    return (walker.out, walker.root, walker.coordinatesUnavailable)
 }
 
 func listable(_ elements: [Element], _ size: ScreenSize, includeUnlabeledImages: Bool = false) -> [Element] {
@@ -217,7 +223,7 @@ extension Runner {
     /// point, depth) live in WDA's process, set by the first session of the runner's life.
     /// `countsAsMiss: false` for a read given less time than a read may take.
     func tree(timeout: Double, format: String = "json", workspace: Bool = false, countsAsMiss: Bool = true,
-              appAfterSource: Bool = false) async throws -> (elements: [Element], foreground: Foreground) {
+              appAfterSource: Bool = false, includeUnpositioned: Bool = false) async throws -> (elements: [Element], foreground: Foreground) {
         let xml = format.lowercased() == "xml"
         await ensureSettings(timeout: min(timeout, 3))
         let started = now()
@@ -244,7 +250,12 @@ extension Runner {
             guard let text = sourceValue.string, let parsed = flattenXML(Data(text.utf8)) else {
                 throw RunnerError(message: "the runner's XML tree could not be read", delivery: .notSent)
             }
-            return (parsed.elements, Foreground(bundleID: bundleID, name: appName ?? parsed.root.label ?? parsed.root.name, pokiPane: pokiPane))
+            let foreground = Foreground(bundleID: bundleID, name: appName ?? parsed.root.label ?? parsed.root.name, pokiPane: pokiPane)
+            if parsed.coordinatesUnavailable, !includeUnpositioned {
+                throw RunnerError(message: "the app reports local coordinates; use the screenshot for positions",
+                                  delivery: .notSent, code: "compatibility_window_requires_screenshot_coordinates", foreground: foreground)
+            }
+            return (parsed.elements, foreground)
         }
         let root = (try? sourceValue.string.map(JSON.parse)) ?? sourceValue
         let name = appName ?? root["label"]?.text ?? root["name"]?.text
@@ -326,7 +337,10 @@ extension Runner {
             // asked for once more within the read's time. A timed-out one is not: the runner is
             // still serving it, and a second request would only queue behind it.
             let left = started + timeout - now()
-            if (e as? RunnerError)?.delivery == .notSent, left > 1.2 {
+            if (e as? RunnerError)?.code == "compatibility_window_requires_screenshot_coordinates" {
+                reading.coordinatesUnavailable = true
+                reading.notes.append("\(e)")
+            } else if (e as? RunnerError)?.delivery == .notSent, left > 1.2 {
                 await sleep(seconds: 0.3)
                 if let again = try? await self.tree(timeout: left - 0.4, format: format, workspace: workspace) {
                     reading.elements = again.elements; reading.foreground = again.foreground; treeCame = true

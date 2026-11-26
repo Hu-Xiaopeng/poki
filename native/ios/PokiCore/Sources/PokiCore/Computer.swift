@@ -256,7 +256,8 @@ final class Computer: @unchecked Sendable {
                     reading.elements = []
                 }
             } else {
-                confirmedPaneRead = front == pane.app && reading.png != nil && (besidePoki || !reading.elements.isEmpty)
+                confirmedPaneRead = front == pane.app && reading.png != nil &&
+                    (besidePoki || !reading.elements.isEmpty || reading.coordinatesUnavailable)
             }
             if !confirmedPaneRead {
                 invalidateWorkspaceRead()
@@ -496,7 +497,10 @@ final class Computer: @unchecked Sendable {
                 body.append("found by scroll_to: \(line(assigned[i]!, shown[i], " ").trimmingCharacters(in: .whitespaces)) (tap \(assigned[i]!))")
             }
         }
-        if pictureOnly { heading = "elements (\(shown.count), read from the picture because the element tree did not come in time; a number taps the text's centre):" }
+        if pictureOnly {
+            let reason = reading.coordinatesUnavailable ? "the app reports local coordinates" : "the element tree did not come in time"
+            heading = "elements (\(shown.count), read from the picture because \(reason); a number taps the text's centre):"
+        }
         if !collapsed.isEmpty, !full { heading += "  ([collapsed] = one element whose parts are not in the tree; full=true adds the text read from the picture inside it, or tap a point on the screenshot)" }
 
         var jpeg: Data?

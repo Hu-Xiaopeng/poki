@@ -629,13 +629,15 @@ extension Computer {
     /// else the field holding `holding`, else the only field on screen. `keyboard`: the keyboard is
     /// up; `came`: the tree was read.
     func fieldOnScreen(target: Element?, holding: String? = nil, timeout: Double) async -> (field: Element?, keyboard: Bool, came: Bool) {
-        guard let seen = try? await runner.tree(timeout: timeout, format: config.treeFormat) else { return (nil, false, false) }
+        guard let seen = try? await runner.tree(timeout: timeout, format: config.treeFormat, includeUnpositioned: true) else {
+            return (nil, false, false)
+        }
         let all = seen.elements
         let keyboard = all.contains { $0.type == "Keyboard" }
         let fields = all.filter { Self.fieldTypes.contains($0.type) }
         var field: Element?
         if let target {
-            field = fields.first { $0.frame.contains(target.frame.centre) || target.frame.contains($0.frame.centre) }
+            field = fields.first { !$0.frame.isEmpty && ($0.frame.contains(target.frame.centre) || target.frame.contains($0.frame.centre)) }
         }
         if field == nil, let holding, !holding.isEmpty { field = fields.first { ($0.value ?? "").contains(holding) } }
         if field == nil, fields.count == 1 { field = fields[0] }
