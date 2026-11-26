@@ -1,18 +1,18 @@
 # Stripped Lab iPhone run
 
-The **safety gate did not pass**, so the four background fixture trials did not run. The host installed the three development-signed Lab bundles, launched Poki Lab for the safety check, and never received a ready state within 10 seconds. That is consistent with an iOS authorization prompt, a Lab startup or session failure, or a container-read problem. It does not establish which occurred. No consent was answered, and the run was not retried.
+The **safety gate did not pass on either attempt**, so the four background fixture trials did not run. The host installed the three development-signed Lab bundles, launched Poki Lab for the safety check, and received no ready state within 10 seconds on either attempt. The first attempt was reported to have happened with the phone locked. Before the authorized retry, CoreDevice reported that no passcode was required both at preflight and immediately before launch. The retry reached the same timeout. Neither attempt established whether iOS was requesting consent or whether Lab startup, session open, or phase readback failed. No consent was answered, and no further attempt was made.
 
 | Run | Result |
 | --- | --- |
 | Device | iPhone 17 Pro, iOS 27.3 (24C5037i), wired, Developer Mode enabled |
 | Tested build | `0918cbcf`, stripped Debug, signed with existing local Xcode profiles |
-| Elapsed | 24.72 seconds for host preflight, installation, run attempt, and removal |
+| Elapsed | 24.72 seconds for the first attempt and 23.27 seconds for the retry, each including the harness preflight, installation, and removal |
 | Local Stop and session close | Not verified. The launch was observed, but the safety-ready phase and session invalidation were not. |
 | UIKit read, bar-button activate, field set, plain UIButton refusal | Not reached. The host did not launch either fixture or enter the action lane. |
-| Delivery, action timing, foreground witness and Sentinel input | Not measured. The JSONL export had zero rows. |
+| Delivery, action timing, foreground witness and Sentinel input | Not measured. Both JSONL exports had zero rows. |
 | Automation Running watermark | Unconfirmed. The run produced no system AX observation and took no physical-device screenshot. |
 | Live Activity | Not applicable to this build. The stripped Lab has no widget or App Group. |
-| Cleanup | All three uninstall commands succeeded. A follow-up query for each of the three exact bundle IDs confirmed it was absent. |
+| Cleanup | All three uninstall commands succeeded on each attempt. Follow-up queries confirmed the three exact bundle IDs were absent after each attempt. |
 
 No ordinary Poki bundle, private content, system settings, or signing registrations were modified. This run provides no physical-device compatibility or indicator-clearance result and does not support shipping background control.
 
