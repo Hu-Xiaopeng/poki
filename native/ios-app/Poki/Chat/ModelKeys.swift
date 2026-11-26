@@ -150,7 +150,7 @@ enum ModelProvider: String, CaseIterable, Identifiable, Sendable {
             guard !model.isEmpty, provider.primary != nil else { return nil }
             return ChatModelChoice(id: CustomProviders.choiceID(provider.id, model),
                                    name: CustomProviders.choiceName(provider, model, among: providers.count),
-                                   shortName: model)
+                                   shortName: ChatModelChoice.stripProviderPrefix(from: model))
         }
     }
 
@@ -278,14 +278,11 @@ struct ChatModelChoice: Hashable, Identifiable, Sendable {
             if !stripped.isEmpty { value = stripped }
         }
 
-        let gatewayVendors = ["openai/", "anthropic/", "google/", "deepseek/"]
-        for vendor in gatewayVendors {
-            if value.lowercased().hasPrefix(vendor) {
-                let stripped = String(value.dropFirst(vendor.count))
-                if !stripped.isEmpty {
-                    value = stripped
-                    break
-                }
+        if let slash = value.lastIndex(of: "/") {
+            let prefix = value[..<slash]
+            let tail = value[value.index(after: slash)...].trimmingCharacters(in: .whitespaces)
+            if !prefix.isEmpty, !prefix.contains(where: \.isWhitespace), !tail.isEmpty {
+                value = tail
             }
         }
 
@@ -551,7 +548,7 @@ enum ModelKeys {
             return choice.shortName
         }
         if provider == .custom, let parsed = CustomProviders.parse(model) {
-            return parsed.model
+            return ChatModelChoice.stripProviderPrefix(from: parsed.model)
         }
         return ChatModelChoice.stripProviderPrefix(from: model)
     }

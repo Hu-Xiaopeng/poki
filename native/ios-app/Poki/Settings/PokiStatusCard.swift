@@ -118,7 +118,7 @@ struct PokiMenu<Face: View>: View {
                                         let models = choices.compactMap { choice -> ChatModelChoice? in
                                             guard let selection = CustomProviders.parse(choice.id),
                                                   selection.provider == custom.id else { return nil }
-                                            return ChatModelChoice(id: choice.id, name: selection.model, shortName: selection.model)
+                                            return ChatModelChoice(id: choice.id, name: selection.model, shortName: choice.shortName)
                                         }
                                         if !models.isEmpty {
                                             modelGroup(custom.displayName, provider: provider, choices: models)
@@ -205,7 +205,7 @@ struct PokiMenu<Face: View>: View {
                         let models = choices.compactMap { choice -> ChatModelChoice? in
                             guard let selection = CustomProviders.parse(choice.id),
                                   selection.provider == custom.id else { return nil }
-                            return ChatModelChoice(id: choice.id, name: selection.model, shortName: selection.model)
+                            return ChatModelChoice(id: choice.id, name: selection.model, shortName: choice.shortName)
                         }
                         if !models.isEmpty {
                             providerMenus.append(nativeModelGroup(custom.displayName, provider: provider, choices: models))

@@ -162,7 +162,7 @@ struct ComposerTaskSettings: View {
                 ForEach(CustomProviders.all(in: storage)) { custom in
                     let entries = choices.compactMap { choice -> ChatModelChoice? in
                         guard let selection = CustomProviders.parse(choice.id), selection.provider == custom.id else { return nil }
-                        return ChatModelChoice(id: choice.id, name: selection.model, shortName: selection.model)
+                        return ChatModelChoice(id: choice.id, name: selection.model, shortName: choice.shortName)
                     }
                     modelGroup(custom.displayName, provider: provider, choices: entries)
                 }

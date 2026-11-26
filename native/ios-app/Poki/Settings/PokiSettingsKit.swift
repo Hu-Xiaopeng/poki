@@ -71,11 +71,13 @@ struct SettingsRow: View {
     enum Accessory { case done, leaves }
 
     var body: some View {
+        let hasCaption = caption != nil || dataCaption != nil
         HStack(spacing: min(18, iconSpacing)) {
             SettingsIcon(symbol: symbol)
                 .padding(.vertical, SettingsRowMetrics.iconLineInset)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.body).foregroundStyle(Color(.label))
+                    .fixedSize(horizontal: !typeSize.isAccessibilitySize && value != nil && hasCaption, vertical: false)
                 if let caption { Text(caption).font(.footnote).foregroundStyle(Color(.secondaryLabel)) }
                 if let dataCaption {
                     Text(verbatim: dataCaption).font(.footnote).foregroundStyle(Color(.secondaryLabel))
@@ -84,9 +86,14 @@ struct SettingsRow: View {
                 // At the accessibility sizes the value goes under the caption, as in Settings.
                 if typeSize.isAccessibilitySize, let value { valueView(value) }
             }
+            .layoutPriority(hasCaption ? 0 : 1)
             Spacer(minLength: 8)
-            // The value keeps its width (a model's name, the way of asking); the caption wraps instead.
-            if !typeSize.isAccessibilitySize, let value { valueView(value).lineLimit(1).layoutPriority(1) }
+            if !typeSize.isAccessibilitySize, let value {
+                valueView(value)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .layoutPriority(hasCaption ? 1 : 0)
+            }
             switch accessory {
             case .done:
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(Tint.green).accessibilityLabel(Text("Done"))
