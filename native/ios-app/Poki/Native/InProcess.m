@@ -735,24 +735,34 @@ static uint64_t PKDuoDisplayID(id object) {
     return value > 0 ? (uint64_t)value : 0;
 }
 
+static NSArray *PKDuoMappedSnapshotAttributes(NSArray *keys) {
+    Class snapshot = NSClassFromString(@"XCElementSnapshot");
+    SEL selector = NSSelectorFromString(@"axAttributesForElementSnapshotKeyPaths:isMacOS:");
+    if (![snapshot respondsToSelector:selector]) return nil;
+    @try {
+        id mapped = ((PKMapAttributes)objc_msgSend)(snapshot, selector, keys, NO);
+        if ([mapped isKindOfClass:NSSet.class]) mapped = [mapped allObjects];
+        return [mapped isKindOfClass:NSArray.class] && [mapped count] ? [mapped copy] : nil;
+    } @catch (__unused NSException *exception) {
+        // Some XCTest versions reject an unknown snapshot key path.
+        return nil;
+    }
+}
+
 static NSArray *PKDuoDisplaySnapshotAttributes(void) {
     static NSArray *attributes;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        NSArray *keys = @[@"elementType", @"frame", @"children", @"displayID"];
-        Class snapshot = NSClassFromString(@"XCElementSnapshot");
-        SEL selector = NSSelectorFromString(@"axAttributesForElementSnapshotKeyPaths:isMacOS:");
-        id mapped = [snapshot respondsToSelector:selector] ? ((PKMapAttributes)objc_msgSend)(snapshot, selector, keys, NO) : nil;
-        if ([mapped isKindOfClass:NSSet.class]) mapped = [mapped allObjects];
-        if ([mapped isKindOfClass:NSArray.class] && [mapped count]) {
-            for (id attribute in mapped) {
-                if ([[[attribute description] lowercaseString] hasSuffix:@"displayid"]) {
-                    attributes = mapped;
-                    return;
-                }
+        NSArray *geometry = @[@"elementType", @"frame", @"children"];
+        NSArray *mapped = PKDuoMappedSnapshotAttributes([geometry arrayByAddingObject:@"displayID"]);
+        if (!mapped) mapped = PKDuoMappedSnapshotAttributes(geometry) ?: geometry;
+        for (id attribute in mapped) {
+            if ([[[attribute description] lowercaseString] hasSuffix:@"displayid"]) {
+                attributes = mapped;
+                return;
             }
         }
-        attributes = @[@"elementType", @"frame", @"children", @"XC_kAXXCAttributeWindowDisplayId"];
+        attributes = [mapped arrayByAddingObject:@"XC_kAXXCAttributeWindowDisplayId"];
     });
     return attributes;
 }
@@ -798,15 +808,14 @@ static id PKDuoScreenForCompatibilityWindow(id ax, id element, CGRect window, CG
         matched = screen;
     }
     if (![matched respondsToSelector:@selector(bounds)]) return nil;
-    CGFloat scale = PKSignature(matched, @selector(scale), @encode(CGFloat), @[])
-        ? ((CGFloat (*)(id, SEL))objc_msgSend)(matched, @selector(scale)) : 0;
     CGSize bounds = [matched bounds].size;
     CGSize panels[] = {CGSizeMake(669, 951), CGSizeMake(466, 678)};
     for (NSUInteger i = 0; i < sizeof(panels) / sizeof(panels[0]); ++i) {
-        if (PKDuoMatchesRenderSize(bounds, panels[i], 1) ||
-            (scale <= 4 && PKDuoMatchesRenderSize(bounds, panels[i], scale))) {
-            *physicalFrame = (CGRect){CGPointZero, panels[i]};
-            return matched;
+        for (NSUInteger scale = 1; scale <= 4; ++scale) {
+            if (PKDuoMatchesRenderSize(bounds, panels[i], scale)) {
+                *physicalFrame = (CGRect){CGPointZero, panels[i]};
+                return matched;
+            }
         }
     }
     return nil;

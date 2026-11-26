@@ -13,11 +13,11 @@
 static NSArray<XCUIScreen *> *panels;
 static long long capturedDisplayID;
 static void (^onScreenCapture)(void);
+static NSString *fixtureMode;
 
 @implementation XCUIScreen
 + (NSArray *)screens { return panels; }
 + (instancetype)mainScreen { return panels.firstObject; }
-- (CGFloat)scale { return 3; }
 - (instancetype)screenshot {
     capturedDisplayID = self.displayID;
     if (onScreenCapture) {
@@ -28,6 +28,29 @@ static void (^onScreenCapture)(void);
     return self;
 }
 - (NSData *)PNGRepresentation { return self.pixels; }
+@end
+
+@interface ScreenWithScale : XCUIScreen
+@end
+
+@implementation ScreenWithScale
+- (CGFloat)scale { return 3; }
+@end
+
+@interface XCElementSnapshot : NSObject
+@end
+
+@implementation XCElementSnapshot
++ (id)axAttributesForElementSnapshotKeyPaths:(NSArray *)keys isMacOS:(BOOL)isMacOS {
+    NSMutableSet *mapped = [NSMutableSet setWithArray:@[@"XC_kAXXCAttributeElementType", @"XC_kAXXCAttributeFrame"]];
+    if ([keys containsObject:@"displayID"]) {
+        if ([fixtureMode isEqualToString:@"throw-display-key"]) {
+            @throw [NSException exceptionWithName:NSInvalidArgumentException reason:@"Unsupported displayID key path" userInfo:nil];
+        }
+        if ([fixtureMode isEqualToString:@"no-screen-scale"]) [mapped addObject:@"XC_kAXXCAttributeWindowDisplayId"];
+    }
+    return mapped;
+}
 @end
 
 @interface XCPointerEventPath : NSObject
@@ -158,7 +181,7 @@ static void (^onScreenCapture)(void);
 @end
 
 static XCUIScreen *panel(long long displayID, CGSize grid, CGSize picture, UIColor *color) {
-    XCUIScreen *screen = [XCUIScreen new];
+    XCUIScreen *screen = [fixtureMode isEqualToString:@"no-screen-scale"] ? [XCUIScreen new] : [ScreenWithScale new];
     screen.displayID = displayID;
     screen.bounds = (CGRect){CGPointZero, grid};
     UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat defaultFormat];
@@ -468,6 +491,9 @@ static BOOL checkCompanionBindingRetry(PKDisplayGeometry scene, CGSize crop) {
     if (element == self.wechat) {
         self.wechatSnapshotCalls++;
         if (self.compatibilityDisplayIDs) {
+            // The real AX client expects mapped geometry attributes even when the display ID uses its raw name.
+            if (![attributes containsObject:@"XC_kAXXCAttributeElementType"] ||
+                ![attributes containsObject:@"XC_kAXXCAttributeFrame"]) return nil;
             BOOL asked = [attributes containsObject:@"XC_kAXXCAttributeWindowDisplayId"];
             self.wechatSnapshot.displayID = asked ? self.compatibilityDisplayIDs.firstObject.longLongValue : 0;
             [self.wechatSnapshot.children enumerateObjectsUsingBlock:^(AXNode *window, NSUInteger index, BOOL *stop) {
@@ -817,10 +843,11 @@ static BOOL checkCompanionTaskHeldPicture(PKDisplayGeometry scene, CGSize crop) 
     return checkShot(runner, 2, crop, 255, @"held AX read preserves the confirmed task pane picture", NO);
 }
 
-int main(void) {
+int main(int argc, const char *argv[]) {
     // The simulated hardware here is supplied by the fixture, regardless of the host simulator.
     setenv("SIMULATOR_MODEL_IDENTIFIER", "iPhone19,4", 1);
     @autoreleasepool {
+        fixtureMode = argc > 1 ? [NSString stringWithUTF8String:argv[1]] : @"no-screen-scale";
         CGSize cover = CGSizeMake(1398, 2034), inner = CGSizeMake(2852, 2006);
         panels = @[panel(1, cover, cover, UIColor.blackColor),
                    panel(2, CGSizeMake(2007, 2853), inner, UIColor.whiteColor)];
