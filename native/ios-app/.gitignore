@@ -18,6 +18,7 @@ PokiExternal.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/*
 !PokiExternal.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
 # Written by xcodegen from project.yml.
 Poki/Info.plist
+PokiDeviceLab-Info.plist
 Poki/Poki.entitlements
 Poki/PokiLocal.entitlements
 PokiWidgets/Info.plist

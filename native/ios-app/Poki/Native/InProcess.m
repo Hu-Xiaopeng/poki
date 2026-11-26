@@ -10,7 +10,7 @@
 #import <sys/utsname.h>
 #import <UIKit/UIKit.h>
 #import <Vision/Vision.h>
-#if POKI_BACKGROUND_MATRIX && TARGET_OS_SIMULATOR
+#if (POKI_BACKGROUND_MATRIX && TARGET_OS_SIMULATOR) || (DEBUG && POKI_BACKGROUND_MATRIX_DEVICE)
 #import <sys/sysctl.h>
 #endif
 
@@ -3497,7 +3497,7 @@ static NSString *PKDaemonReply(NSTimeInterval seconds, void (^send)(void (^)(NSE
 
 @end
 
-#if POKI_BACKGROUND_MATRIX && TARGET_OS_SIMULATOR
+#if (POKI_BACKGROUND_MATRIX && TARGET_OS_SIMULATOR) || (DEBUG && POKI_BACKGROUND_MATRIX_DEVICE)
 static id PKMatrixAppElement(int pid) {
     Class type = NSClassFromString(@"XCAccessibilityElement");
     SEL make = NSSelectorFromString(@"elementWithProcessIdentifier:");
@@ -3523,6 +3523,43 @@ static void PKMatrixFlatten(id node, NSMutableArray *items) {
 }
 
 @implementation PKInProcess (BackgroundMatrix)
+
+- (BOOL)matrixPrepareLocal {
+    @try {
+        return [_sessions prepare:NULL] != nil;
+    } @catch (NSException *exception) {
+        return NO;
+    }
+}
+
+- (BOOL)matrixCloseConfirmed {
+    BOOL opened = _sessions.generation != 0;
+    NSDictionary *close = [self close];
+    return !opened || ([close[@"closed"] boolValue] && [_sessions lastCloseAcknowledged] && ![_sessions automationOn]);
+}
+
+- (BOOL)matrixWatermarkSeen {
+    uint64_t generation = 0;
+    id session = [_sessions enabledSessionWithGeneration:&generation];
+    if (!session) return NO;
+    id ax = [self accessibilityFor:generation];
+    if (![ax respondsToSelector:@selector(systemApplication)]) return NO;
+    id overlay = PKBounded(0, 0.4, NULL, ^id { return [ax systemApplication]; });
+    int pid = PKAXPid(overlay);
+    if (pid <= 0 || ![[self bundleForPID:pid session:session] isEqualToString:@"com.apple.springboard"]) return NO;
+    id root = PKRequestSnapshotWithin(0.8, ax, overlay, 4, 40, NULL);
+    if (!root || ![_sessions isCurrent:session generation:generation]) return NO;
+    for (id window in [root children]) {
+        for (id node in [window children]) {
+            if (![PKTypeName([node elementType]) isEqualToString:@"StatusBar"]) continue;
+            if ([[node label] isEqualToString:@"Automation Running"]) return YES;
+            for (id item in [node children]) {
+                if ([[item label] isEqualToString:@"Automation Running"]) return YES;
+            }
+        }
+    }
+    return NO;
+}
 
 - (uint64_t)matrixProcessStart:(int)pid {
     if (pid <= 0) return 0;
@@ -3590,7 +3627,8 @@ static void PKMatrixFlatten(id node, NSMutableArray *items) {
 }
 
 - (NSString *)matrixPerform:(NSString *)operation node:(id)node pid:(int)pid processStart:(uint64_t)processStart
-                  generation:(uint64_t)generation validUntil:(NSTimeInterval)validUntil allowed:(BOOL (^)(void))allowed {
+                  generation:(uint64_t)generation validUntil:(NSTimeInterval)validUntil
+                  preflight:(NSString * _Nullable (^)(void))preflight {
     uint64_t live = 0;
     id session = [_sessions enabledSessionWithGeneration:&live];
     if (!session || live != generation) return @"identity_changed";
@@ -3599,6 +3637,9 @@ static void PKMatrixFlatten(id node, NSMutableArray *items) {
     if (!element || PKAXPid(element) != pid || [node elementType] == 50) return @"stale_ref";
     BOOL set = [operation isEqualToString:@"set"];
     BOOL back = [operation isEqualToString:@"back"];
+#if !TARGET_OS_SIMULATOR
+    if (!set && ![operation isEqualToString:@"activate"]) return @"stale_ref";
+#endif
     NSInteger action = [operation isEqualToString:@"activate"] ? 2010 :
         [operation isEqualToString:@"scroll"] ? 2006 : [operation isEqualToString:@"submit"] ? 2054 : back ? 2013 : 0;
     if ((!set && !action) || (back && [node elementType] != 21)) return @"stale_ref";
@@ -3607,9 +3648,11 @@ static void PKMatrixFlatten(id node, NSMutableArray *items) {
     Class type = NSClassFromString(@"XCUIAccessibilityAction");
     SEL initializer = NSSelectorFromString(@"initWithAXAction:");
     if (!set && ![type instancesRespondToSelector:initializer]) return @"ax_unavailable";
+    NSTimeInterval dispatchDeadline = MIN(validUntil, NSProcessInfo.processInfo.systemUptime + 1.8);
     NSString *answer = PKBounded(pid, 2, NULL, ^id {
-        if (!allowed()) return @"cancelled";
-        if (NSProcessInfo.processInfo.systemUptime > validUntil) return @"stale_ref";
+        NSString *refusal = preflight();
+        if (refusal) return refusal;
+        if (NSProcessInfo.processInfo.systemUptime > dispatchDeadline) return @"stale_ref";
         if (![self->_sessions isCurrent:session generation:generation] || [self matrixProcessStart:pid] != processStart)
             return @"identity_changed";
         NSError *error = nil;
@@ -3624,7 +3667,7 @@ static void PKMatrixFlatten(id node, NSMutableArray *items) {
         if (sent) return @"sent";
         return [error.domain isEqualToString:NSCocoaErrorDomain] ? @"reply_timeout" : @"ax_action_refused";
     });
-    if (![answer isEqualToString:@"sent"] || !back || !allowed()) return answer ?: @"reply_timeout";
+    if (![answer isEqualToString:@"sent"] || !back || preflight()) return answer ?: @"reply_timeout";
     id proxy = [session daemonProxy];
     SEL layout = NSSelectorFromString(@"_XCT_fetchParameterizedAttributeForElement:attributes:parameter:reply:");
     if ([proxy respondsToSelector:layout] && [_sessions isCurrent:session generation:generation] && [self matrixProcessStart:pid] == processStart) {

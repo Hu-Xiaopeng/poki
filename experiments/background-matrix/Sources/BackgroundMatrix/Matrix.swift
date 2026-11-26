@@ -2,6 +2,7 @@ import Foundation
 
 public enum Suite: String, CaseIterable, Sendable {
     case controls, levelTwo = "level_two", swiftUI = "swiftui", web, unseen, unasserted, flutter, compose, reactNative = "react_native"
+    case deviceSafety = "device_safety", deviceControls = "device_controls"
 
     public var alias: String {
         switch self {
@@ -12,6 +13,7 @@ public enum Suite: String, CaseIterable, Sendable {
 
     public var scenario: String {
         switch self {
+        case .deviceSafety: "local_stop"
         case .unseen: "unseen"
         case .unasserted: "warm_unasserted_other_app_front"
         default: "warm_asserted_other_app_front"
@@ -29,19 +31,25 @@ public enum Suite: String, CaseIterable, Sendable {
 
     public var readySelector: String? {
         switch self {
-        case .controls, .unasserted: "matrix.plain"
+        case .controls, .unasserted, .deviceControls: "matrix.plain"
         case .levelTwo: "Activate push"
         case .swiftUI: "sui.button"
         case .web: "WebButton"
         case .flutter: "FlutterButton"
         case .compose: "ComposeButton"
         case .reactNative: "press.plain"
-        case .unseen: nil
+        case .unseen, .deviceSafety: nil
         }
     }
 
     public var cases: [MatrixCase] {
         switch self {
+        case .deviceSafety:
+            [.init("device-local-stop", "stop", .look, nil, .none)]
+        case .deviceControls:
+            ["uikit-read", "uikit-bar", "uikit-set", "uikit-plain"].compactMap { id in
+                Suite.controls.cases.first { $0.id == id }
+            }
         case .controls:
             [
                 .init("uikit-read", "controls", .look, nil, .present("lastEvent")),

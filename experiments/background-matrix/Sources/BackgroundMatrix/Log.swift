@@ -65,7 +65,7 @@ public struct LogRow: Encodable, Sendable {
 
     public let schema = 1
     public let fixtureVersion = "1"
-    public let platform = "iphone-simulator"
+    public let platform: String
     public let route = "lab_ax"
     public let runID: UUID
     public let caseID: String
@@ -81,8 +81,8 @@ public struct LogRow: Encodable, Sendable {
     public let assertion: Assertion
     public let foreground: Foreground
     public let automationMode: String
-    public let watermark = "not_measured"
-    public let liveActivity = "not_measured"
+    public let watermark: String
+    public let liveActivity: String
     public let delivery: Delivery
     public let verification: Verification
     public let outcome: Outcome
@@ -91,9 +91,12 @@ public struct LogRow: Encodable, Sendable {
 
     public init(runID: UUID, suite: Suite, caseIndex: Int, attempt: Int, build: String, osBuild: String, result: Result,
                 stage: Stage, targetBefore: TargetState, targetAfter: TargetState, assertion: Assertion, foreground: Foreground,
-                automationActive: Bool, timings: Timings) {
+                automationActive: Bool, timings: Timings, platform: Platform = .simulator, watermarkSeen: Bool = false) {
         let test = suite.cases[caseIndex]
         self.runID = runID; self.caseID = test.id; self.attempt = attempt
+        self.platform = platform.rawValue
+        self.watermark = platform == .simulator ? "not_measured" : watermarkSeen ? "observed_in_system_ax" : "not_confirmed_in_system_ax"
+        self.liveActivity = platform == .simulator ? "not_measured" : "not_applicable_no_widget"
         self.build = Self.normalized(build, pattern: "^[0-9a-f]{7,40}$")
         self.osBuild = Self.normalized(osBuild, pattern: "^[0-9]{2}[A-Z][0-9]{1,5}[a-z]?$")
         self.scenario = suite.scenario; self.app = suite.alias; self.control = test.control; self.op = test.op
@@ -101,6 +104,10 @@ public struct LogRow: Encodable, Sendable {
         self.automationMode = automationActive ? "active" : "not_measured"
         self.delivery = result.delivery; self.verification = result.verification; self.outcome = result.outcome
         self.error = result.reason.map { ErrorCode($0, stage: stage) }; self.ms = timings
+    }
+
+    public enum Platform: String, Sendable {
+        case simulator = "iphone-simulator", device = "iphone"
     }
 
     private static func normalized(_ value: String, pattern: String) -> String {

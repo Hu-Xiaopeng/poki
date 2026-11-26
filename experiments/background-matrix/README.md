@@ -49,3 +49,17 @@ Every trial starts a fresh Lab process. The host stages only the fixture and the
 The sentinel counts observed touch/press starts. Foreground sampling is a point-in-time witness, not proof about gaps between samples, and it does not establish concurrent physical use. A dispatched reply is not success: the matrix checks the expected fixture field value, callback marker, scroll offset, or destination content. If only the transport responds and the effect isn't visible in accessibility, report it as unverified rather than success. No live screenshot is taken; the screenshot cell checks safe refusal.
 
 JSONL uses the versioned manifest in `Sources/BackgroundMatrix/Matrix.swift` and schema version 1 in `Log.swift`. The adapter retains AX labels only in memory to verify synthetic expected properties; no snapshots, app inventory, process IDs, user-provided strings, or raw daemon errors go into the file. The host exports only the normalized JSONL rows. To stop a live simulator trial, create the `stop` file next to the Lab container's `Documents/BackgroundMatrix/phase`; the runner checks it before dispatch and during readback. The session closes after each trial. A dedicated lab device run is a separate approval and implementation step.
+
+## Stripped Debug device Lab
+
+`native/ios-app/project-lab-device.yml` generates a separate fixture-only app. It has no widget, App Group, tunnel, Poki startup or MCP server. The build flags `POKI_DEVICE_MATRIX_SWIFT_FLAG=POKI_BACKGROUND_MATRIX_DEVICE` and `POKI_DEVICE_MATRIX_NATIVE_FLAG=POKI_BACKGROUND_MATRIX_DEVICE=1` are empty by default and affect only Debug. A normal launch additionally requires the local opt-in and Start. The USB harness uses a separate per-launch opt-in, tests Stop and verifies native session invalidation before opening the four-case lane, and stops rather than answering OS consent.
+
+Use existing development profiles and build Debug for generic iOS. Do not pass `-allowProvisioningUpdates`. Build `PokiDeviceLab`, `AXFixture` and `MatrixSentinel` from their respective project specs, with signing enabled for the fixture. Then run against an explicitly approved, unlocked wired iPhone 17 Pro on 24C5037i:
+
+```sh
+python3 -B experiments/background-matrix/run_device.py \
+  --device "$APPROVED_DEVICE_ID" --build "$(git rev-parse HEAD)" --out "$OUT/device.jsonl" \
+  --lab "$LAB_APP" --fixture "$AX_FIXTURE_APP" --sentinel "$MATRIX_SENTINEL_APP"
+```
+
+The harness refuses to overwrite Lab builds already on the phone. It stages the fixture until Lab confirms its baseline, brings Sentinel forward, and then performs no other app launch until cleanup. It uninstalls only the apps it attempted to install. The watermark is reported as seen or unconfirmed in the system status-bar accessibility sample; unconfirmed does not mean absent. The stripped app does not measure Live Activities. It never takes a physical-device screenshot.

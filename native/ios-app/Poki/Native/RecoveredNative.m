@@ -174,7 +174,7 @@ static BOOL SRABI(id target, SEL selector, const char *result, NSArray<NSString 
     NSRecursiveLock *_lifecycleLock;
     id _observed, _token, _enabled;
     uint64_t _generation, _enabledGeneration;
-    BOOL _invalidated, _reused, _handlerFired;
+    BOOL _invalidated, _reused, _handlerFired, _lastCloseAcknowledged;
     /// When the enable of Automation Mode under way began (uptime), 0 while none is.
     NSTimeInterval _enablingSince;
     NSString *_closeDetail, *_rebindDetail;
@@ -228,6 +228,7 @@ static BOOL SRABI(id target, SEL selector, const char *result, NSArray<NSString 
     id session = _observed;
     BOOL open = session && !_invalidated && _token != nil;
     _invalidated = YES; _enabled = nil; _enabledGeneration = 0; _handlerFired = NO;
+    _lastCloseAcknowledged = NO;
     [_lifecycleLock unlock];
     if (!open) return NO;
     id link = [session respondsToSelector:@selector(connection)] ? [session connection] : nil;
@@ -241,11 +242,19 @@ static BOOL SRABI(id target, SEL selector, const char *result, NSArray<NSString 
     BOOL fired = invalidated && gone && dispatch_semaphore_wait(gone, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC)) == 0;
     if (!fired) { [_lifecycleLock lock]; fired = _handlerFired; [_lifecycleLock unlock]; }
     [_lifecycleLock lock];
+    _lastCloseAcknowledged = invalidated && fired;
     _closeDetail = [NSString stringWithFormat:@"link=%@ invalidate=%@ handler_fired=%@",
                     link ? NSStringFromClass([link class]) : @"none", invalidated ? @"yes" : @"no", fired ? @"yes" : @"no"];
     [_lifecycleLock unlock];
     NSLog(@"SRNativeSession close: %@", _closeDetail);
     return YES;
+}
+
+- (BOOL)lastCloseAcknowledged {
+    [_lifecycleLock lock];
+    BOOL acknowledged = _lastCloseAcknowledged;
+    [_lifecycleLock unlock];
+    return acknowledged;
 }
 /// Selectors on `cls` (and its superclasses up to NSObject) whose name has `part`.
 static NSArray<NSString *> *SRSelectorsWith(Class cls, NSString *part) {

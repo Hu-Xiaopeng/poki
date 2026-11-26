@@ -1,0 +1,44 @@
+name: PokiDeviceLab
+options:
+  deploymentTarget:
+    iOS: "18.0"
+packages:
+  BackgroundMatrix:
+    path: ../../experiments/background-matrix
+targets:
+  PokiDeviceLab:
+    type: application
+    platform: iOS
+    sources:
+      - Poki/Debug/BackgroundMatrixDeviceApp.swift
+      - Poki/Debug/BackgroundMatrixProbe.swift
+      - Poki/Native
+      - Shared/Localizable.xcstrings
+    info:
+      path: PokiDeviceLab-Info.plist
+      properties:
+        CFBundleDisplayName: Poki Lab
+        CFBundleDevelopmentRegion: en
+        CFBundleLocalizations: [en, zh-Hans, zh-Hant]
+        UILaunchScreen: {}
+    dependencies:
+      - package: BackgroundMatrix
+      - sdk: Vision.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: nz.zheha.poki.lab
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_VERSION: "5.0"
+        SWIFT_OBJC_BRIDGING_HEADER: Poki/Native/InProcess.h
+        LD_RUNPATH_SEARCH_PATHS: $(inherited) @executable_path/Frameworks /System/Developer/usr/lib /System/Developer/Library/PrivateFrameworks /System/Developer/Library/Frameworks
+      configs:
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) POKI_STRIPPED_MATRIX_LAB $(POKI_DEVICE_MATRIX_SWIFT_FLAG)
+          GCC_PREPROCESSOR_DEFINITIONS: $(inherited) $(POKI_DEVICE_MATRIX_NATIVE_FLAG)
+        Release:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) POKI_STRIPPED_MATRIX_LAB
+schemes:
+  PokiDeviceLab:
+    build:
+      targets:
+        PokiDeviceLab: all

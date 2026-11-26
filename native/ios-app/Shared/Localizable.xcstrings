@@ -1,6 +1,116 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Poki Lab" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : { "state" : "translated", "value" : "Poki 实验室" }
+        },
+        "zh-Hant" : {
+          "stringUnit" : { "state" : "translated", "value" : "Poki 實驗室" }
+        }
+      }
+    },
+    "Ready for the safety check" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : { "state" : "translated", "value" : "准备进行安全检查" }
+        },
+        "zh-Hant" : {
+          "stringUnit" : { "state" : "translated", "value" : "準備進行安全檢查" }
+        }
+      }
+    },
+    "Enable this Lab trial" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : { "state" : "translated", "value" : "启用本次实验" }
+        },
+        "zh-Hant" : {
+          "stringUnit" : { "state" : "translated", "value" : "啟用本次實驗" }
+        }
+      }
+    },
+    "Start fixture trials" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : { "state" : "translated", "value" : "开始测试应用实验" }
+        },
+        "zh-Hant" : {
+          "stringUnit" : { "state" : "translated", "value" : "開始測試 App 實驗" }
+        }
+      }
+    },
+    "Start safety check" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : { "state" : "translated", "value" : "开始安全检查" }
+        },
+        "zh-Hant" : {
+          "stringUnit" : { "state" : "translated", "value" : "開始安全檢查" }
+        }
+      }
+    },
+    "Safety check passed" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : { "state" : "translated", "value" : "安全检查通过" }
+        },
+        "zh-Hant" : {
+          "stringUnit" : { "state" : "translated", "value" : "安全檢查通過" }
+        }
+      }
+    },
+    "Fixture trials finished" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : { "state" : "translated", "value" : "测试应用实验已结束" }
+        },
+        "zh-Hant" : {
+          "stringUnit" : { "state" : "translated", "value" : "測試 App 實驗已結束" }
+        }
+      }
+    },
+    "Lab stopped. Do not retry" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : { "state" : "translated", "value" : "实验已停止，请勿重试" }
+        },
+        "zh-Hant" : {
+          "stringUnit" : { "state" : "translated", "value" : "實驗已停止，請勿重試" }
+        }
+      }
+    },
+    "Lab trial running" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : { "state" : "translated", "value" : "实验正在运行" }
+        },
+        "zh-Hant" : {
+          "stringUnit" : { "state" : "translated", "value" : "實驗正在執行" }
+        }
+      }
+    },
+    "Lab could not start" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : { "state" : "translated", "value" : "无法启动实验" }
+        },
+        "zh-Hant" : {
+          "stringUnit" : { "state" : "translated", "value" : "無法啟動實驗" }
+        }
+      }
+    },
+    "Lab is stopping" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : { "state" : "translated", "value" : "正在停止实验" }
+        },
+        "zh-Hant" : {
+          "stringUnit" : { "state" : "translated", "value" : "正在停止實驗" }
+        }
+      }
+    },
     "Tap Poki" : {
       "localizations" : {
         "zh-Hans" : {
