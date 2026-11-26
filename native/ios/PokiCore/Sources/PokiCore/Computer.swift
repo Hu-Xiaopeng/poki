@@ -2779,6 +2779,41 @@ final class Computer: @unchecked Sendable {
             .min { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }
     }
 
+    /// Reads a fresh screenshot and recognizes text targets for approval hit-testing on
+    /// compatibility screens whose accessibility frames are app-local.
+    func ocrElementsForApproval(until: Double) async -> [Element]? {
+        let shotBudget = min(3, max(0, until - now() - 0.3))
+        guard shotBudget >= 0.3, let png = try? await runner.screenshot(timeout: shotBudget) else { return nil }
+        let currentSize: ScreenSize? = if size == nil || runner.transport.usesDynamicScreenSize {
+            (try? await screenSize(until: min(until, now() + 1.5), refreshing: true)) ?? size
+        } else {
+            size
+        }
+        guard let currentSize, currentSize.width > 0, currentSize.height > 0 else { return nil }
+        let ocrBudget = min(3.5, until - now() - 0.2)
+        guard ocrBudget >= 0.3 else { return nil }
+        let host = self.host
+        guard let texts = (try? await withDeadline(ocrBudget, "reading text from the picture", { await host.recognizeText(inPNG: png) })) ?? nil else {
+            return nil
+        }
+        return texts.map { t in
+            Element(
+                type: "Text",
+                label: t.text,
+                value: nil,
+                identifier: nil,
+                frame: Rect(
+                    x: t.box.x * currentSize.width,
+                    y: t.box.y * currentSize.height,
+                    width: t.box.width * currentSize.width,
+                    height: t.box.height * currentSize.height
+                ),
+                depth: 0,
+                fromPicture: true
+            )
+        }
+    }
+
     /// The element a spec points at: a number of the latest read, or what lies under a point (of the
     /// latest read, or of `elements`, where numbers mean nothing).
     func target(_ spec: JSON?, in elements: [Element]? = nil) -> Element? {
@@ -2985,8 +3020,11 @@ final class Computer: @unchecked Sendable {
             if messaging, text.contains(where: \.isNewline), !Self.isSearch(e) { return "sending a message (a return typed in \(app))" }
         case .key:
             let key = spec.text ?? ""
-            if key.lowercased() == "return", let field = scan.typingTarget, rules.reason(touching: field, typing: true, app: scan.front, secureOnScreen: false, in: tree) != nil {
-                return "submitting a password field"
+            if key.lowercased() == "return" {
+                let field = scan.typingTarget?.fromPicture == true ? nil : scan.typingTarget
+                if rules.secureFields, field?.isSecure == true || (field == nil && scan.read && scan.secureOnScreen) {
+                    return "submitting a password field"
+                }
             }
             // Return is the send key in WeChat, WhatsApp and Telegram: typed text goes out on it.
             if messaging, (Self.keyText[key.lowercased()] ?? key).contains(where: \.isNewline), !Self.isSearch(scan.typingTarget) {

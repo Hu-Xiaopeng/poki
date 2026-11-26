@@ -1613,13 +1613,20 @@ extension Computer {
             } else if config.sensitive.enabled, ActionKind(action)?.movesScreen == true {
                 scan = SensitiveScan(front: front, read: false, secureOnScreen: false)
                 if let tree = try? await runner.tree(timeout: min(config.readTimeout, max(0.3, until - now() - 0.1)), format: config.treeFormat,
-                                                     includeUnpositioned: ActionKind(action) == .type) {
+                                                     includeUnpositioned: true) {
                     lastAll = tree.coordinatesUnavailable ? [] : tree.elements
                     if tree.coordinatesUnavailable { lastUnpositioned = UnpositionedScreen(elements: tree.elements) }
                     lastForeground = tree.foreground
-                    front = tree.foreground ?? front
+                    front = tree.foreground
                     read = true
-                    let elements = listable(lastAll, screen)
+                    var elements = listable(lastAll, screen)
+                    if tree.coordinatesUnavailable, ActionKind(action)?.presses(action) == true {
+                        guard let ocr = await ocrElementsForApproval(until: until) else {
+                            refs[Self.runRef] = nil
+                            throw stop(index, "the app reports local coordinates and the screenshot could not be checked for approval; send it as an ordinary do after looking at the screen")
+                        }
+                        elements = ocr
+                    }
                     scan = SensitiveScan(
                         front: front,
                         secureOnScreen: lastUnpositioned.hasSecureField || elements.contains(where: \.isSecure),
