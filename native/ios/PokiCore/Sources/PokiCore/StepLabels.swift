@@ -23,7 +23,7 @@ extension Computer {
         }
         if let text = action["type"]?.text {
             let e = action["ref"].flatMap { refs[$0.int ?? -1] }
-            if e?.isSecure == true || lastElements.contains(where: \.isSecure) { return "Type \(text.count) hidden characters" }
+            if e?.isSecure == true || lastScreenHasSecureField { return "Type \(text.count) hidden characters" }
             // Curly quotes in the text become straight ones, so the label's own ” ends it (withoutTypedText).
             let shown = Self.short(text, 32).replacingOccurrences(of: "[“”]", with: "\"", options: .regularExpression)
             return "Type “\(shown)”"
@@ -39,6 +39,7 @@ extension Computer {
             return "Scroll"
         }
         if action["drag"] != nil { return "Drag" }
+        if action["adjust"] != nil { return "Adjust" }
         if let spec = action["pinch"] {
             let scale = spec["scale"]?.double ?? action["scale"]?.double ?? 2
             return scale >= 1 ? "Zoom in" : "Zoom out"

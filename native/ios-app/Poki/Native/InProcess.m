@@ -434,6 +434,15 @@ static id PKForegroundElementTimed(id ax, PKDisplayGeometry geometry, CGRect *pa
     return candidates.firstObject;
 }
 
+/// A BOOL property of an element snapshot, or `fallback` when the snapshot does not have it.
+static BOOL PKSnapshotFlag(id node, NSString *key, BOOL fallback) {
+    @try {
+        id value = [node valueForKey:key];
+        if ([value respondsToSelector:@selector(boolValue)]) return [value boolValue];
+    } @catch (__unused NSException *e) {}
+    return fallback;
+}
+
 /// The attributes the XML needs and no more: each extra one (visibility, hittability) costs the AX
 /// server more round trips per element.
 static NSArray *PKSnapshotAttributes(void) {
@@ -2993,28 +3002,32 @@ CGPoint PKWorkspaceLauncherPoint(NSDictionary<NSString *, NSArray<NSValue *> *> 
             count++;
             CGRect f = [node frame];
             NSString *identifier = PKText([node identifier]), *label = PKText([node label]), *value = PKText([(NSObject *)node value]);
+            BOOL textField = [type hasSuffix:@"Field"] || [type hasSuffix:@"TextView"];
             // An empty field shows its placeholder as its value, as WebDriverAgent's source does
             // (UIKit's accessibilityValue of an empty UITextField is its placeholder; the snapshot
             // keeps them apart), so a listing names the field by what the person sees in it.
-            if (!value.length && [node respondsToSelector:@selector(placeholderValue)] && ([type hasSuffix:@"Field"] || [type hasSuffix:@"TextView"])) {
+            if (!coordinatesUnavailable && !value.length && textField && [node respondsToSelector:@selector(placeholderValue)]) {
                 value = PKText([node placeholderValue]);
             }
             NSString *name = identifier.length ? identifier : label;
             [xml appendFormat:@"<%@ type=\"%@\"", type, type];
             if (name.length) [xml appendFormat:@" name=\"%@\"", PKEscape(name)];
             if (label.length) [xml appendFormat:@" label=\"%@\"", PKEscape(label)];
-            if (value.length) [xml appendFormat:@" value=\"%@\"", PKEscape(value)];
-            if ([node respondsToSelector:@selector(isEnabled)] && ![node isEnabled]) [xml appendString:@" enabled=\"false\""];
+            if (value.length || (coordinatesUnavailable && textField && value)) [xml appendFormat:@" value=\"%@\"", PKEscape(value)];
             if (coordinatesUnavailable || CGRectIsNull(f) || CGRectIsInfinite(f)) f = CGRectZero;
             else {
                 if (paneRead) f = CGRectIntersection(CGRectOffset(f, treeOffset, 0), clip);
                 f = CGRectIsNull(f) ? CGRectZero : CGRectOffset(f, -shift.x, -shift.y);
             }
             [xml appendFormat:@" x=\"%d\" y=\"%d\" width=\"%d\" height=\"%d\"", (int)lround(f.origin.x), (int)lround(f.origin.y), (int)lround(f.size.width), (int)lround(f.size.height)];
+            // The snapshot already carries enabled and selected (PKSnapshotAttributes asks for both);
+            // only the exceptions are written, so an ordinary tree grows by nothing (issue #609).
+            if (!PKSnapshotFlag(node, @"enabled", YES)) [xml appendString:@" enabled=\"false\""];
+            if (PKSnapshotFlag(node, @"selected", NO)) [xml appendString:@" selected=\"true\""];
             BOOL keyboard = [node respondsToSelector:@selector(hasKeyboardFocus)] ? [node hasKeyboardFocus]
                 : [node respondsToSelector:@selector(hasFocus)] && [node hasFocus];
-            if (!focus && keyboard && (coordinatesUnavailable || !paneRead || !CGRectIsEmpty(f)) &&
-                ([type hasSuffix:@"Field"] || [type hasSuffix:@"TextView"])) {
+            if (coordinatesUnavailable && textField && keyboard) [xml appendString:@" keyboardFocused=\"true\""];
+            if (!focus && keyboard && textField && (coordinatesUnavailable || !paneRead || !CGRectIsEmpty(f))) {
                 NSMutableDictionary *field = [@{@"value": value ?: @"", @"x": @(f.origin.x), @"y": @(f.origin.y), @"width": @(f.size.width), @"height": @(f.size.height)} mutableCopy];
                 // The placeholder, so a failed type can tell an empty field that shows it from typed text
                 // (ESP-160). NSNull: the field has none; no key: the snapshot did not say.
@@ -3298,6 +3311,55 @@ static NSString *PKDaemonReply(NSTimeInterval seconds, void (^send)(void (^)(NSE
     return title && digits.count == 10 ? digits : @{};
 }
 
+/// The lock screen's passcode field, for a passcode that is not 4 or 6 digits: a custom numeric code
+/// or an alphanumeric one (the owner, Nov 21 2026). `empty`: the field holds nothing the owner typed.
+- (BOOL)passcodeFieldForSession:(id)session generation:(uint64_t)generation display:(PKDisplayGeometry)display
+                         before:(double)deadline empty:(BOOL *)empty {
+    id root = [self lockedSpringBoardForSession:session generation:generation depth:16 count:160 before:deadline];
+    if (!root) return NO;
+    NSMutableArray *nodes = [NSMutableArray arrayWithObject:root];
+    while (nodes.count) {
+        id node = nodes.lastObject;
+        [nodes removeLastObject];
+        if ([PKTypeName([node elementType]) isEqualToString:@"SecureTextField"]) {
+            CGRect frame = [node frame];
+            if (!CGRectIsEmpty(frame) && CGRectContainsRect(display.bounds, frame)) {
+                NSString *value = [node respondsToSelector:@selector(value)] ? PKText([(NSObject *)node valueForKey:@"value"]) : nil;
+                NSString *placeholder = [node respondsToSelector:@selector(placeholderValue)] ? PKText([node placeholderValue]) : nil;
+                if (empty) *empty = value.length == 0 || [value isEqualToString:placeholder];
+                return YES;
+            }
+        }
+        NSArray *children = [node children];
+        if (children.count) [nodes addObjectsFromArray:children];
+    }
+    return NO;
+}
+
+/// The key that submits a custom numeric code on the lock screen's keypad (OK), where there is one.
+- (NSValue *)passcodeSubmitKeyForSession:(id)session generation:(uint64_t)generation display:(PKDisplayGeometry)display
+                                  before:(double)deadline {
+    id root = [self lockedSpringBoardForSession:session generation:generation depth:16 count:160 before:deadline];
+    if (!root) return nil;
+    NSSet *names = [NSSet setWithArray:@[@"OK", @"Done", @"Enter", @"好", @"完成", @"确定", @"確定", @"好的"]];
+    NSMutableArray *nodes = [NSMutableArray arrayWithObject:root];
+    while (nodes.count) {
+        id node = nodes.lastObject;
+        [nodes removeLastObject];
+        NSString *type = PKTypeName([node elementType]);
+        NSString *label = [PKText([node label]) stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        BOOL key = [type isEqualToString:@"Button"] || [type isEqualToString:@"Key"];
+        if (key && label && [names containsObject:label] && [node respondsToSelector:@selector(isEnabled)] && [node isEnabled]) {
+            CGRect frame = [node frame];
+            if (!CGRectIsEmpty(frame) && CGRectContainsRect(display.bounds, frame))
+                return [NSValue valueWithCGPoint:CGPointMake(CGRectGetMidX(frame), CGRectGetMidY(frame))];
+        }
+        NSArray *children = [node children];
+        if (children.count) [nodes addObjectsFromArray:children];
+    }
+    return nil;
+}
+
 - (PKUnlockResult)unlockPhoneWithPasscode:(NSString *)passcode timeout:(double)timeout allowed:(BOOL (^)(void))allowed {
     if (!allowed() || !PKPhoneLocked()) return PKUnlockResultUnavailable;
     uint64_t generation = 0;
@@ -3343,6 +3405,17 @@ static NSString *PKDaemonReply(NSTimeInterval seconds, void (^send)(void (^)(NSE
         }
         // A keypad that was already visible may contain a passcode the owner started entering.
         if (!keys || keys.count || !canSend()) return PKUnlockResultKeypadUnavailable;
+        // So may a passcode field (custom and alphanumeric codes) that is already up.
+        BOOL fieldEmpty = YES;
+        if ([self passcodeFieldForSession:session generation:generation display:display before:deadline empty:&fieldEmpty] && !fieldEmpty)
+            return PKUnlockResultKeypadUnavailable;
+        // Digits only: the keypad (4 or 6 digits submit themselves, a custom numeric code takes OK).
+        // Anything else is typed into the passcode field with the keyboard, then Return.
+        BOOL numeric = passcode.length > 0;
+        for (NSUInteger i = 0; i < passcode.length && numeric; i++) {
+            unichar c = [passcode characterAtIndex:i];
+            numeric = c >= '0' && c <= '9';
+        }
         CGFloat x = CGRectGetMidX(display.bounds);
         NSArray *swipe = @[[PKTouchPoint at:CGPointMake(x, CGRectGetMaxY(display.bounds) - 2) offset:0],
                            [PKTouchPoint at:CGPointMake(x, CGRectGetMidY(display.bounds)) offset:0.3],
@@ -3351,12 +3424,34 @@ static NSString *PKDaemonReply(NSTimeInterval seconds, void (^send)(void (^)(NSE
                 lockDisplay:lockDisplay check:canSend].delivery != PKDeliverySent)
             return PKUnlockResultTouchRejected;
         const double keypadDeadline = MIN(deadline, NSProcessInfo.processInfo.systemUptime + 3);
+        BOOL field = NO;
         do {
             keys = [self passcodeKeysForSession:session generation:generation display:display before:keypadDeadline];
-            if (keys.count) break;
+            if (numeric && keys.count) break;
+            fieldEmpty = YES;
+            field = [self passcodeFieldForSession:session generation:generation display:display before:keypadDeadline empty:&fieldEmpty];
+            if (!numeric && field) break;
             if (!canSend()) break;
             [NSThread sleepForTimeInterval:0.15];
         } while (NSProcessInfo.processInfo.systemUptime < keypadDeadline);
+        if (!numeric) {
+            // An alphanumeric passcode: the lock screen shows a field and the keyboard, focused.
+            if (!field || !fieldEmpty || !canSend()) return PKUnlockResultKeypadUnavailable;
+            SRActionContext *context = [self contextFor:session generation:generation];
+            NSTimeInterval started = NSProcessInfo.processInfo.systemUptime;
+            NSError *error;
+            if (!SRInsertTextAtSpeed(session, [passcode stringByAppendingString:@"\n"], 60, context, &error))
+                return PKUnlockResultTouchRejected;
+            PKOutcome *typed = [self await:context timeout:MIN(4, remaining()) started:started generation:generation];
+            const double typedDeadline = MIN(deadline, NSProcessInfo.processInfo.systemUptime + 4);
+            do {
+                uint64_t state;
+                if (PKReadPhoneLock(&state) && state == 0) return PKUnlockResultUnlocked;
+                if (!canSend()) break;
+                [NSThread sleepForTimeInterval:0.15];
+            } while (NSProcessInfo.processInfo.systemUptime < typedDeadline);
+            return typed.delivery == PKDeliverySent ? PKUnlockResultSubmissionUnconfirmed : PKUnlockResultSubmissionIncomplete;
+        }
         if (!keys.count) return PKUnlockResultKeypadUnavailable;
         BOOL touchRejected = NO;
         NSUInteger delivered = 0;
@@ -3376,7 +3471,25 @@ static NSString *PKDaemonReply(NSTimeInterval seconds, void (^send)(void (^)(NSE
             }
             delivered++;
         }
-        const BOOL submitted = delivered == passcode.length;
+        BOOL submitted = delivered == passcode.length;
+        // A custom numeric code (not 4 or 6 digits) waits for OK after its last digit.
+        if (submitted && passcode.length != 4 && passcode.length != 6) {
+            [NSThread sleepForTimeInterval:0.4];
+            uint64_t state;
+            if (!(PKReadPhoneLock(&state) && state == 0) && canSend()) {
+                NSValue *ok = [self passcodeSubmitKeyForSession:session generation:generation display:display
+                                                         before:MIN(deadline, NSProcessInfo.processInfo.systemUptime + 1.5)];
+                if (ok) {
+                    CGPoint point = ok.CGPointValue;
+                    NSArray *finger = @[[PKTouchPoint at:point offset:0], [PKTouchPoint at:point offset:0.04]];
+                    PKOutcome *outcome = [self touch:@[finger] timeout:MIN(1, remaining()) geometry:display
+                                             session:session generation:generation lockDisplay:lockDisplay check:canSend];
+                    submitted = outcome.delivery == PKDeliverySent;
+                } else {
+                    submitted = NO;
+                }
+            }
+        }
         const double resultDeadline = MIN(deadline, NSProcessInfo.processInfo.systemUptime + (submitted ? 4 : 0.5));
         do {
             uint64_t state;
@@ -3435,6 +3548,53 @@ static NSString *PKDaemonReply(NSTimeInterval seconds, void (^send)(void (^)(NSE
         out[@"picture_error"] = [NSString stringWithFormat:@"%@: %@", e.name, e.reason];
     }
     out[@"picture_seconds"] = @(NSProcessInfo.processInfo.systemUptime - t);
+    return out;
+}
+
+- (NSDictionary<NSString *, id> *)quietReadTrial {
+    NSMutableDictionary *out = [NSMutableDictionary new];
+    NSError *error = nil;
+    id session = nil;
+    NSTimeInterval t = NSProcessInfo.processInfo.systemUptime;
+    @try {
+        session = [_sessions openWithoutAutomation:&error];
+    } @catch (NSException *e) {
+        out[@"code"] = @"exception"; out[@"detail"] = e.reason ?: @""; return out;
+    }
+    out[@"open_seconds"] = @(NSProcessInfo.processInfo.systemUptime - t);
+    if (!session) { out[@"code"] = error.localizedDescription ?: @"no_session"; return out; }
+    uint64_t generation = _sessions.generation;
+    out[@"generation"] = @(generation);
+    out[@"automation_on"] = @([_sessions automationOn]);
+    t = NSProcessInfo.processInfo.systemUptime;
+    id app = nil, ax = nil;
+    @try {
+        ax = [self accessibilityFor:generation];
+        @synchronized (self) { out[@"accessibility_loaded"] = @(_accessibilityGeneration == generation); }
+        __weak PKInProcess *weakSelf = self;
+        app = PKForegroundElement(ax, self.displayGeometry, NULL, ^NSString *(int pid) { return [weakSelf bundleForPID:pid session:session]; });
+        int pid = PKAXPid(app);
+        out[@"front_pid"] = @(pid);
+        if (pid) out[@"front_bundle"] = [self bundleForPID:pid session:session] ?: @"?";
+        out[@"front_ok"] = @(app != nil);
+    } @catch (NSException *e) {
+        out[@"front_error"] = [NSString stringWithFormat:@"%@: %@", e.name, e.reason];
+    }
+    out[@"front_seconds"] = @(NSProcessInfo.processInfo.systemUptime - t);
+    t = NSProcessInfo.processInfo.systemUptime;
+    @try {
+        NSString *code = nil;
+        id root = app ? PKSnapshotTree(ax, app, &code) : nil;
+        out[@"tree_ok"] = @(root != nil);
+        out[@"tree_elements"] = @(root ? PKCount(root) : 0);
+        if (code && !root) out[@"tree_error"] = code;
+    } @catch (NSException *e) {
+        out[@"tree_error"] = [NSString stringWithFormat:@"%@: %@", e.name, e.reason];
+    }
+    out[@"tree_seconds"] = @(NSProcessInfo.processInfo.systemUptime - t);
+    // A read must not have turned Automation Mode on by itself.
+    out[@"automation_on_after"] = @([_sessions automationOn]);
+    out[@"code"] = @"done";
     return out;
 }
 

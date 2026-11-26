@@ -34,26 +34,49 @@ public struct Element: Equatable, Sendable {
     public var identifier: String?
     public var frame: Rect
     public var depth: Int
-    public var isDisabled: Bool
     /// The element's place in the tree, in document order, and the last place inside it: an element
     /// whose `node` is in `node+1...end` is inside this one.
     public var node = 0
     public var end = 0
     /// Not in the tree: text read from the screenshot.
     public var fromPicture = false
+    /// Greyed out: a tap does nothing. Only a tree that says so sets it (the in-process XML writes
+    /// enabled="false"); a tree that does not report it leaves every element enabled.
+    public var enabled = true
+    /// The picked tab, segment or row.
+    public var selected = false
+    var keyboardFocused = false
 
-    public init(type: String, label: String?, value: String?, identifier: String?, frame: Rect, depth: Int, node: Int = 0, end: Int = 0, fromPicture: Bool = false, isDisabled: Bool = false) {
+    public init(type: String, label: String?, value: String?, identifier: String?, frame: Rect, depth: Int, node: Int = 0, end: Int = 0, fromPicture: Bool = false, enabled: Bool = true, selected: Bool = false, isDisabled: Bool = false) {
         self.type = type
         self.label = label
         self.value = value
         self.identifier = identifier
         self.frame = frame
         self.depth = depth
-        self.isDisabled = isDisabled
         self.node = node
         self.end = end
         self.fromPicture = fromPicture
+        self.enabled = enabled && !isDisabled
+        self.selected = selected
     }
+
+    /// Greyed out (main's name for `!enabled`).
+    public var isDisabled: Bool { !enabled }
+
+    /// Controls `adjust` sets by value.
+    static let adjustableTypes: Set<String> = ["Slider", "PickerWheel", "Adjustable"]
+    /// What a label does not say: disabled, selected, adjustable (issue #609: an agent could not tell a
+    /// greyed-out Undo from a live one, or that a control was a slider).
+    public var states: [String] {
+        var s: [String] = []
+        if !enabled { s.append("disabled") }
+        if selected { s.append("selected") }
+        if Self.adjustableTypes.contains(type) { s.append("adjustable") }
+        return s
+    }
+    /// The states as a listing shows them, " (disabled, selected)", or "".
+    public var stateMark: String { states.isEmpty ? "" : " (\(states.joined(separator: ", ")))" }
 
     func contains(_ other: Element) -> Bool { node < other.node && other.node <= end }
 
@@ -100,6 +123,7 @@ public struct Reading: Sendable {
     var firstPictureAt: Double?
     var treeAt: Double?
     var coordinatesUnavailable = false
+    var hasUnpositionedSecureField = false
     public var notes: [String] = []
     public var ms = 0
 
@@ -107,7 +131,20 @@ public struct Reading: Sendable {
         png = capture.data
         screenshotCompanion = capture.companion
     }
+
+    fileprivate mutating func use(_ tree: SourceTree) {
+        foreground = tree.foreground
+        if tree.coordinatesUnavailable {
+            coordinatesUnavailable = true
+            hasUnpositionedSecureField = tree.elements.contains(where: \.isSecure)
+            notes.append("the app reports local coordinates; use the screenshot for positions")
+        } else {
+            elements = tree.elements
+        }
+    }
 }
+
+typealias SourceTree = (elements: [Element], foreground: Foreground, coordinatesUnavailable: Bool)
 
 private func reportsDisabled(_ enabled: String?) -> Bool {
     enabled == "false" || enabled == "0"
@@ -130,9 +167,9 @@ func flatten(_ root: JSON) -> [Element] {
             let type = (node["type"]?.string ?? "Other").replacingOccurrences(of: "XCUIElementType", with: "")
             let name = node["name"]?.text
             index = out.count
-            let enabled = (node["isEnabled"] ?? node["enabled"])?.text
+            let enabledRaw = node["isEnabled"] ?? node["enabled"]
             out.append(Element(type: type, label: node["label"]?.text ?? name, value: node["value"]?.text, identifier: name, frame: frame, depth: depth, node: place, end: place,
-                               isDisabled: reportsDisabled(enabled)))
+                               enabled: (enabledRaw?.bool ?? true) && !reportsDisabled(enabledRaw?.text), selected: (node["isSelected"] ?? node["selected"])?.bool ?? false))
         }
         for child in node["children"]?.array ?? [] { walk(child, depth + 1) }
         if let index { out[index].end = counter }
@@ -169,8 +206,11 @@ func flattenXML(_ data: Data) -> (elements: [Element], root: (label: String?, na
                 let id = attributes["name"]
                 index = out.count
                 let position = coordinatesUnavailable ? Rect(x: 0, y: 0, width: 0, height: 0) : frame
-                out.append(Element(type: type, label: attributes["label"] ?? id, value: attributes["value"], identifier: id, frame: position, depth: depth, node: place, end: place,
-                                   isDisabled: reportsDisabled(attributes["enabled"])))
+                var element = Element(type: type, label: attributes["label"] ?? id, value: attributes["value"], identifier: id,
+                                      frame: position, depth: depth, node: place, end: place,
+                                      enabled: !reportsDisabled(attributes["enabled"]), selected: attributes["selected"] == "true")
+                element.keyboardFocused = attributes["keyboardFocused"] == "true"
+                out.append(element)
             }
             open.append(index)
         }
@@ -223,7 +263,7 @@ extension Runner {
     /// point, depth) live in WDA's process, set by the first session of the runner's life.
     /// `countsAsMiss: false` for a read given less time than a read may take.
     func tree(timeout: Double, format: String = "json", workspace: Bool = false, countsAsMiss: Bool = true,
-              appAfterSource: Bool = false, includeUnpositioned: Bool = false) async throws -> (elements: [Element], foreground: Foreground) {
+              appAfterSource: Bool = false, includeUnpositioned: Bool = false) async throws -> SourceTree {
         let xml = format.lowercased() == "xml"
         await ensureSettings(timeout: min(timeout, 3))
         let started = now()
@@ -255,11 +295,11 @@ extension Runner {
                 throw RunnerError(message: "the app reports local coordinates; use the screenshot for positions",
                                   delivery: .notSent, code: "compatibility_window_requires_screenshot_coordinates", foreground: foreground)
             }
-            return (parsed.elements, foreground)
+            return (parsed.elements, foreground, parsed.coordinatesUnavailable)
         }
         let root = (try? sourceValue.string.map(JSON.parse)) ?? sourceValue
         let name = appName ?? root["label"]?.text ?? root["name"]?.text
-        return (flatten(root), Foreground(bundleID: bundleID, name: name, pokiPane: pokiPane))
+        return (flatten(root), Foreground(bundleID: bundleID, name: name, pokiPane: pokiPane), false)
     }
 
     static let pictureLagLimit = 0.6
@@ -308,9 +348,9 @@ extension Runner {
         let wanted = nextLimits.value
         if wanted != limits.value { await useLimits(wanted) }
         let readLimits = limits.value
-        async let treePart: Result<(elements: [Element], foreground: Foreground), Error> = {
+        async let treePart: Result<SourceTree, Error> = {
             do {
-                return .success(try await self.tree(timeout: timeout, format: format, workspace: workspace, appAfterSource: appAfterSource))
+                return .success(try await self.tree(timeout: timeout, format: format, workspace: workspace, appAfterSource: appAfterSource, includeUnpositioned: true))
             } catch { return .failure(error) }
         }()
         async let picturePart: Result<ScreenCapture, Error>? = wantPicture ? {
@@ -329,7 +369,7 @@ extension Runner {
         var reading = Reading()
         var treeCame = false
         switch await treePart {
-        case .success(let t): reading.elements = t.elements; reading.foreground = t.foreground; treeCame = true
+        case .success(let t): reading.use(t); treeCame = true
         case .failure(let e):
             reading.foreground = (e as? RunnerError)?.foreground
             // A snapshot the runner refused at once (the app's main loop was busy for the moment:
@@ -337,13 +377,10 @@ extension Runner {
             // asked for once more within the read's time. A timed-out one is not: the runner is
             // still serving it, and a second request would only queue behind it.
             let left = started + timeout - now()
-            if (e as? RunnerError)?.code == "compatibility_window_requires_screenshot_coordinates" {
-                reading.coordinatesUnavailable = true
-                reading.notes.append("\(e)")
-            } else if (e as? RunnerError)?.delivery == .notSent, left > 1.2 {
+            if (e as? RunnerError)?.delivery == .notSent, left > 1.2 {
                 await sleep(seconds: 0.3)
-                if let again = try? await self.tree(timeout: left - 0.4, format: format, workspace: workspace) {
-                    reading.elements = again.elements; reading.foreground = again.foreground; treeCame = true
+                if let again = try? await self.tree(timeout: left - 0.4, format: format, workspace: workspace, includeUnpositioned: true) {
+                    reading.use(again); treeCame = true
                     reading.notes.append("the element tree came on the second try (the first was refused: \(e))")
                 } else {
                     reading.notes.append("no element tree: \(e); a second try within the read's time was refused too")
@@ -357,9 +394,9 @@ extension Runner {
                 reading.notes.append("no element tree (\(readLimits.isFull ? "full" : readLimits.described)): \(e)")
                 if await waitUntilFree(timeout: min(3, retryUntil - now() - 1.5)) {
                     await useLimits(smaller)
-                    if limits.value == smaller, let again = try? await self.tree(timeout: max(0.5, min(2, retryUntil - now() - 0.2)), format: format, workspace: workspace) {
-                        reading.elements = again.elements; reading.foreground = again.foreground; treeCame = true
+                    if limits.value == smaller, let again = try? await self.tree(timeout: max(0.5, min(2, retryUntil - now() - 0.2)), format: format, workspace: workspace, includeUnpositioned: true) {
                         reading.notes.removeLast()
+                        reading.use(again); treeCame = true
                         reading.notes.append("the full tree timed out (\(e)), so it was read again with \(smaller.described) within this call; \(smaller.caveat)")
                     }
                 }
@@ -435,7 +472,7 @@ extension Runner {
             }
         }
         reading.ms = Int(((now() - started) * 1000).rounded())
-        if treeCame { reading.treeAt = treeAt }
+        if treeCame, !reading.coordinatesUnavailable { reading.treeAt = treeAt }
         return reading
     }
 }

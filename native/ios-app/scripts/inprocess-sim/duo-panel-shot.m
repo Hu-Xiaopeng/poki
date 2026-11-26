@@ -589,6 +589,7 @@ static BOOL checkCompatibilityWindow(PKDisplayGeometry coverScene, CGSize innerP
     NSString *xml = [runner sourceXML:&focus code:&code];
     if (![xml containsString:@"screenCoordinates=\"unavailable\""] ||
         ![xml containsString:@"label=\"Search\" x=\"0\" y=\"0\" width=\"0\" height=\"0\""] ||
+        ![xml containsString:@"keyboardFocused=\"true\""] ||
         ![focus[@"value"] isEqual:@"Duo"] || ![focus[@"width"] isEqual:@0]) {
         printf("FAIL app-local compatibility coordinates were exposed as screenshot coordinates\n");
         return NO;

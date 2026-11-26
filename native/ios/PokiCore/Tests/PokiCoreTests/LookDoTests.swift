@@ -20,7 +20,7 @@ final class LookDoTests: XCTestCase {
         wda.set("GET /source") { _ in
             (200, ["value": .string("""
                 <AppiumAUT screenCoordinates="unavailable"><XCUIElementTypeApplication>
-                <XCUIElementTypeTextField label="Unpositioned field" value="\(typed.value ? "Duo" : "")" x="40" y="50" width="80" height="30"/>
+                <XCUIElementTypeTextField label="Unpositioned field" value="\(typed.value ? "Duo" : "")" x="40" y="50" width="80" height="30" keyboardFocused="true"/>
                 <XCUIElementTypeKeyboard/>
                 </XCUIElementTypeApplication></AppiumAUT>
                 """)])
@@ -36,6 +36,74 @@ final class LookDoTests: XCTestCase {
         let changed = await core.call("look", ["pane": "right"], session: "workspace-owner")
         XCTAssertTrue(changed.isError, changed.text)
         XCTAssertNil(changed.jpeg)
+    }
+
+    func testLegacyPasswordApprovalSurvivesOCRWithoutRevealingTypedText() async {
+        for useRef in [false, true] {
+            let (core, wda, host) = makeCore {
+                $0.treeFormat = "xml"
+                $0.approvalWait = 0
+                $0.approvalMode = { .confirm }
+            }
+            wda.set("GET /source") { _ in
+                (200, ["value": "<AppiumAUT screenCoordinates=\"unavailable\"><XCUIElementTypeApplication><XCUIElementTypeSecureTextField label=\"Password\" keyboardFocused=\"true\"/></XCUIElementTypeApplication></AppiumAUT>"])
+            }
+            host.texts.value = [RecognizedText(text: "Password", box: Rect(x: 0.1, y: 0.2, width: 0.3, height: 0.05))]
+            let read = await core.call("look", [:])
+            XCTAssertTrue(read.text.contains("1 Text \"Password\""), read.text)
+            let testText = "synthetic-secret-value"
+            var action: [String: JSON] = ["type": .string(testText)]
+            if useRef { action["ref"] = 1 }
+            let result = await core.call("do", ["actions": .array([.object(action)])])
+            XCTAssertTrue(result.text.contains("approval_required"), result.text)
+            XCTAssertEqual(core.pendingApproval?.summary, "Type \(testText.count) hidden characters")
+            XCTAssertFalse(result.text.contains(testText))
+            XCTAssertTrue(wda.bodies("POST /wda/keys").isEmpty)
+        }
+    }
+
+    func testLegacyClearUsesOnlyTheReadableFocusedField() async {
+        let (core, wda, host) = makeCore { $0.treeFormat = "xml" }
+        let value = LockedBox("oldA")
+        let focus = LockedBox(true)
+        wda.set("GET /source") { _ in
+            (200, ["value": .string("""
+                <AppiumAUT screenCoordinates="unavailable"><XCUIElementTypeApplication>
+                <XCUIElementTypeTextField label="First field" value="\(value.value)" keyboardFocused="\(focus.value)"/>
+                <XCUIElementTypeTextField label="Second field" value="longer value"/>
+                <XCUIElementTypeKeyboard/>
+                </XCUIElementTypeApplication></AppiumAUT>
+                """)])
+        }
+        wda.set("POST /wda/keys") { body in
+            for key in body?["value"]?.array?.compactMap(\.string) ?? [] {
+                if key == "\u{8}" { value.update { if !$0.isEmpty { $0.removeLast() } } }
+                else { value.update { $0.append(contentsOf: key) } }
+            }
+            return (200, ["value": .null])
+        }
+        host.texts.value = [RecognizedText(text: "First field", box: Rect(x: 0.1, y: 0.2, width: 0.3, height: 0.05))]
+        _ = await core.call("look", [:])
+        let replaced = await core.call("do", ["actions": [["type": "new", "ref": 1, "clear": true]]])
+        XCTAssertEqual(value.value, "new", replaced.text)
+        XCTAssertEqual(wda.bodies("POST /wda/keys").count, 1)
+        focus.value = false
+        let refused = await core.call("do", ["actions": [["type": "other", "clear": true]]])
+        XCTAssertTrue(refused.text.contains("clear needs a readable focused field"), refused.text)
+        XCTAssertEqual(wda.bodies("POST /wda/keys").count, 1)
+    }
+
+    func testLegacyWaitUntilFindsAndLosesTextWithoutCoordinates() async {
+        let (core, wda, _) = makeCore { $0.treeFormat = "xml" }
+        let label = LockedBox("Ready")
+        wda.set("GET /source") { _ in
+            (200, ["value": .string("<AppiumAUT screenCoordinates=\"unavailable\"><XCUIElementTypeApplication><XCUIElementTypeStaticText label=\"\(label.value)\"/></XCUIElementTypeApplication></AppiumAUT>")])
+        }
+        let appeared = await core.call("do", ["actions": [["wait_until": ["text": "Ready", "ms": 300]]]])
+        XCTAssertTrue(appeared.text.contains("\"Ready\" appeared after"), appeared.text)
+        label.value = "Done"
+        let gone = await core.call("do", ["actions": [["wait_until": ["text": "Ready", "gone": true, "ms": 300]]]])
+        XCTAssertTrue(gone.text.contains("\"Ready\" was gone after"), gone.text)
     }
 
     func testDuoCompanionKeepsOnlyThePictureProvenForTheSelectedPaneWhenAccessibilityIsHeld() async {
@@ -1633,14 +1701,13 @@ final class LookDoTests: XCTestCase {
     }
     #endif
 
-    func testCoordinatePauseExplainsWhyEvenWhenScreenDidNotChange() async {
+    func testCoordinateActionsChainInOneDo() async {
         let (core, wda, _) = makeCore()
         wda.source([("Button", "Already selected")])
         _ = await core.call("look", [:])
         let result = await core.call("do", ["actions": [["tap": [100, 120]], ["tap": [100, 120]]]])
-        XCTAssertEqual(wda.bodies("POST /wda/tap").count, 1, result.text)
-        XCTAssertTrue(result.text.contains("screen_changed: false"), result.text)
-        XCTAssertTrue(result.text.contains("not_sent from action 2: a coordinate action needs a fresh read"), result.text)
+        XCTAssertEqual(wda.bodies("POST /wda/tap").count, 2, result.text)
+        XCTAssertFalse(result.text.contains("not_sent"), result.text)
     }
 
     func testNumbersStayAndDoListsOnlyWhatChanged() async {
