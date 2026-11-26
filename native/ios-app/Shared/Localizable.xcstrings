@@ -33,6 +33,22 @@
         }
       }
     },
+    "Attachments can’t be sent with an answer." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "回答问题时不能发送附件。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "回答問題時無法傳送附件。"
+          }
+        }
+      }
+    },
     "Book a ticket to Shanghai for tomorrow" : {
       "localizations" : {
         "zh-Hans" : {
@@ -177,7 +193,7 @@
         }
       }
     },
-    "JD" : {
+    "JD Takeaway" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -209,7 +225,7 @@
         }
       }
     },
-    "Meituan Waimai, Ele.me and JD can all deliver it. Which one?" : {
+    "Meituan Waimai, Ele.me and JD Takeaway can all deliver it. Which one?" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {

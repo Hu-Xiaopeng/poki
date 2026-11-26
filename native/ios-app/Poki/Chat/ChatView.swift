@@ -225,7 +225,9 @@ struct ChatView: View {
                 }
                 ComposerInputView(input: draft, focused: $writing, adding: $adding,
                                   settingsPresented: $composerSettingsPresented, running: busy,
-                                  answering: chat.waitingQuestion?.other == true, progress: progress, restarts: restarts, conversationID: chat.sessionID,
+                                  answering: chat.waitingQuestion?.other == true,
+                                  waitingForAnswer: chat.waitingQuestion != nil,
+                                  progress: progress, restarts: restarts, conversationID: chat.sessionID,
                                   send: { text, attachments in
                                       let reply = scrollReplyQuestion == chat.countedScrollQuestion ? scrollReplyQuestion : nil
                                       scrollReplyQuestion = nil
@@ -840,9 +842,8 @@ struct ChatTranscript<Footer: View>: View {
                 .padding(.top, startsRun(i) ? 10 : 0)
                 .transition(PlanMotion.stepTransition)
         case .question(let question):
-            // The options can be tapped while the question waits: for the task under way, or for a task
-            // that has ended (Poki was closed) when no other task runs.
-            let open = question.state == .asking && (waitingQuestion == question.id || !live)
+            // The options can be tapped only while this question is the active waiting question.
+            let open = question.state == .asking && waitingQuestion == question.id
             QuestionCard(question: question, open: open, tail: isLast(i, poki: true), answer: answer, other: otherAnswer)
                 .padding(.top, startsRun(i) ? 10 : 0)
                 .transition(PlanMotion.stepTransition)
@@ -1379,6 +1380,9 @@ struct ComposerInputView: View {
     /// A question from Poki waits and takes the owner's own words: what is typed is the answer, sent
     /// with the arrow while the task keeps running.
     var answering = false
+    /// Any question from Poki is waiting (even when `allow_other` is false): attachments cannot go
+    /// with an answer and are not added or silently dropped.
+    var waitingForAnswer = false
     var isSettingsPreview = false
     @AppStorage(ComposerSettingsView.modelKey) private var showsModelShortcut = true
     @State private var previewTaps = 0
@@ -1895,12 +1899,16 @@ struct ComposerInputView: View {
         return RecentAppsStore.shared.recentIDs
     }
 
+    private var canAddAttachments: Bool {
+        !waitingForAnswer && attachments.count < Self.most
+    }
+
     /// Plus's A1 smoked Liquid Glass menu, anchored `bottomLeading` 10pt above the `+` button.
     private var ways: some View {
         ComposerPlusMenu(
             quickApps: AppPickerCatalog.quickApps(limit: 3, recentIDs: recentAppIDs, language: AppLanguage.current),
             maxAttachments: Self.most,
-            canAddAttachments: attachments.count < Self.most,
+            canAddAttachments: canAddAttachments,
             canTakePhoto: UIImagePickerController.isSourceTypeAvailable(.camera),
             onPickApp: { pickApp($0, keepFocus: true) },
             onMoreApps: {
@@ -1958,7 +1966,7 @@ struct ComposerInputView: View {
 
     /// One more photo or PDF, up to the limit; a file Poki can't read says so.
     private func add(_ read: () throws -> ChatAttachment) {
-        guard attachments.count < Self.most else { return }
+        guard canAddAttachments else { return }
         do {
             let item = try read()
             withAnimation(.snappy) { attachments.append(item) }
@@ -2021,7 +2029,12 @@ struct ComposerInputView: View {
     }
 
     private func submit() {
+        if waitingForAnswer && !attachments.isEmpty {
+            problem = ChatModel.attachmentsNotAllowedWithAnswerMessage
+            return
+        }
         guard !running || answering && hasText, canSend else { return }
+        problem = nil
         dictation.cancel(model)
         let text = input
         send(text, attachments)
