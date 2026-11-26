@@ -124,7 +124,7 @@ PY
   exit 0
 fi
 if [ "$MODE" = shot ]; then
-  xcrun simctl launch "$UDID" local.poki.inprocess-check -mode read -tag shot -delay 8 >/dev/null
+  xcrun simctl launch "$UDID" local.poki.inprocess-check -mode read -tag shot -expectFront local.pokimcp.fixture >/dev/null
   sleep 3
   xcrun simctl launch "$UDID" local.pokimcp.fixture >/dev/null
   for _ in $(seq 90); do [ -s "$DOCS/shot.json" ] && break; sleep 1; done
@@ -150,7 +150,7 @@ fi
 if [ "$MODE" = cover-compat ]; then
   xcrun simctl launch "$UDID" local.poki.inprocess-check -mode "$MODE" -tag field -text "$TEXT" >/dev/null
 else
-  xcrun simctl launch "$UDID" local.poki.inprocess-check -mode "$MODE" -tag field -delay 8 -text "$TEXT" -times "${POKI_CHECK_TIMES:-1}" >/dev/null
+  xcrun simctl launch "$UDID" local.poki.inprocess-check -mode "$MODE" -tag field -expectFront local.pokimcp.fixture -text "$TEXT" -times "${POKI_CHECK_TIMES:-1}" >/dev/null
   sleep 3
   xcrun simctl launch "$UDID" local.pokimcp.fixture >/dev/null
 fi

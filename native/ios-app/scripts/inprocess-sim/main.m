@@ -66,7 +66,7 @@ static NSDictionary *Run(NSString *mode, NSString *tag, NSString *text) {
         // A touch after close must not go through the closed session: it is refused, or it goes
         // through a session opened for it (a new generation), as touch prepares one itself.
         uint64_t beforeTouch = [PKInProcess.shared generation];
-        PKOutcome *refused = [PKInProcess.shared touch:@[@[[PKTouchPoint at:CGPointMake(10, 10) offset:0], [PKTouchPoint at:CGPointMake(10, 10) offset:0.05]]] timeout:2];
+        PKOutcome *refused = [PKInProcess.shared touch:@[@[[PKTouchPoint at:CGPointMake(10, 120) offset:0], [PKTouchPoint at:CGPointMake(10, 120) offset:0.05]]] timeout:2];
         out[@"closed_touch"] = @{@"delivery": @(refused.delivery), @"code": refused.code ?: @"", @"generation_before": @(beforeTouch), @"generation_after": @([PKInProcess.shared generation])};
         progress(@"touch refused");
         [NSThread sleepForTimeInterval:2];
@@ -102,14 +102,31 @@ static NSDictionary *Run(NSString *mode, NSString *tag, NSString *text) {
         out[@"tap_code"] = tap.code ?: @"";
         return out;
     }
-    [NSThread sleepForTimeInterval:1];
+    if (tap.delivery == PKDeliverySent) {
+        NSTimeInterval focusDeadline = NSProcessInfo.processInfo.systemUptime + 5;
+        NSDictionary *tappedFocus = nil;
+        do {
+            [NSThread sleepForTimeInterval:0.25];
+            tappedFocus = nil;
+            [PKInProcess.shared sourceXML:&tappedFocus code:NULL];
+        } while (!tappedFocus && NSProcessInfo.processInfo.systemUptime < focusDeadline);
+    }
+    [NSThread sleepForTimeInterval:0.5];
     NSInteger times = MAX(1, [NSUserDefaults.standardUserDefaults integerForKey:@"times"]);
     PKOutcome *typed = nil;
     for (NSInteger i = 0; i < times; i++) { typed = [PKInProcess.shared type:text timeout:5]; [NSThread sleepForTimeInterval:0.5]; }
     out[@"type"] = @(typed.delivery);
-    [NSThread sleepForTimeInterval:1];
-    NSDictionary *focus;
-    NSString *after = [PKInProcess.shared sourceXML:&focus code:&code];
+    NSDictionary *focus = nil;
+    NSString *after = nil;
+    NSTimeInterval readDeadline = NSProcessInfo.processInfo.systemUptime + 5;
+    do {
+        [NSThread sleepForTimeInterval:0.5];
+        focus = nil;
+        code = nil;
+        after = [PKInProcess.shared sourceXML:&focus code:&code];
+        NSString *typedValue = [focus[@"value"] isKindOfClass:NSString.class] ? focus[@"value"] : nil;
+        if (focus && (times > 1 ? [typedValue containsString:text] : [typedValue isEqualToString:text])) break;
+    } while (NSProcessInfo.processInfo.systemUptime < readDeadline);
     Write([tag stringByAppendingString:@"-after.xml"], after ?: @"");
     if (focus) out[@"focus"] = focus;
     return out;
@@ -160,10 +177,20 @@ static NSDictionary *Apps(NSString *fixture) {
     NSUserDefaults *args = NSUserDefaults.standardUserDefaults;
     NSString *mode = [args stringForKey:@"mode"] ?: @"read", *tag = [args stringForKey:@"tag"] ?: mode;
     NSString *text = [args stringForKey:@"text"] ?: @"ESP173 读屏";
+    NSString *expectFront = [args stringForKey:@"expectFront"];
     double delay = [args doubleForKey:@"delay"];
     dispatch_async(dispatch_queue_create("check", DISPATCH_QUEUE_SERIAL), ^{
         NSDictionary *prepare = [PKInProcess.shared prepare];
         if (delay > 0) [NSThread sleepForTimeInterval:delay];
+        if (expectFront.length && [prepare[@"ok"] boolValue]) {
+            NSTimeInterval deadline = NSProcessInfo.processInfo.systemUptime + 60;
+            while (NSProcessInfo.processInfo.systemUptime < deadline) {
+                NSDictionary *front = [PKInProcess.shared frontApp];
+                NSString *name = [front[@"name"] isKindOfClass:NSString.class] ? front[@"name"] : nil;
+                if ([front[@"bundleId"] isEqualToString:expectFront] && name.length > 0) break;
+                [NSThread sleepForTimeInterval:0.5];
+            }
+        }
         NSMutableDictionary *out = [([mode isEqualToString:@"apps"] ? Apps([args stringForKey:@"fixture"] ?: @"local.pokimcp.fixture") : Run(mode, tag, text)) mutableCopy];
         out[@"prepare"] = prepare;
         Write([tag stringByAppendingString:@".json"], out);

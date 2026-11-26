@@ -1,14 +1,14 @@
 #!/bin/bash
 # retry-flaky.sh COMMAND...: runs a check.sh command and, when it fails with one of the transient
-# refusals a freshly booted Duo simulator gives on CI, runs it once more (check.sh makes a new
+# refusals a freshly booted simulator gives on CI, runs it once more (check.sh makes a new
 # simulator each time). Those refusals: the XCTest session does not open in time (session_timeout),
 # the just-launched fixture's accessibility server is not up (kAXErrorServerNotFound), the display
-# changes during the first picture, or the fixture is not in front yet. Any other failure, or the
-# same failure twice, fails the step.
+# changes during the first picture, the cold accessibility lookup times out (front_app_unresponsive),
+# or the fixture is not in front yet. Any other failure, or the same failure twice, fails the step.
 set -uo pipefail
 LOG="$(mktemp "${TMPDIR:-/tmp}/poki-check-log.XXXXXX")"
 trap 'rm -f "$LOG"' EXIT
-FLAKES="session_timeout|kAXErrorServerNotFound|display_changed_during_screenshot|front app: \\{'bundleId': 'local\\.poki\\.inprocess-check'"
+FLAKES="session_timeout|kAXErrorServerNotFound|display_changed_during_screenshot|front_app_unresponsive|front app: \\{'bundleId': 'local\\.poki\\.inprocess-check'"
 status=0
 for attempt in 1 2; do
   "$@" 2>&1 | tee "$LOG"
