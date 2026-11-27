@@ -55,16 +55,48 @@ jobs:
   # session is saved, then an outside agent's ask_poki hands a second task to Poki's agent.
   agent-chat:
     if: github.event_name == 'workflow_dispatch'
-    runs-on: macos-latest
+    # Poki uses iOS 27 SDK APIs (WKNavigationAction.mainFrameNavigation) and needs Xcode 27, matching build-ipa.
+    runs-on: xcode-27
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with: { ref: "${{ inputs.ref }}" }
       - name: Use the newest Xcode
         run: |
-          XCODE="$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
+          set -euo pipefail
+          has_metal() {
+            local said
+            said="$(xcrun metal --version 2>&1 || true)"
+            case "$said" in
+              *"missing Metal Toolchain"*|*"unable to find utility"*) return 1 ;;
+            esac
+            return 0
+          }
+          XCODE="$(ls -d /Applications/Xcode_*.app | grep -v -i beta | sort -V | tail -1)"
           sudo xcode-select -s "$XCODE/Contents/Developer"
-          xcodebuild -version
+          xcodebuild -version && xcrun --sdk iphonesimulator --show-sdk-version
+          if ! has_metal; then
+            echo "$XCODE has no Metal Toolchain on this runner: downloading it"
+            xcodebuild -downloadComponent MetalToolchain
+            if ! has_metal; then
+              echo "::error::The Metal Toolchain is missing for $XCODE and could not be downloaded."
+              exit 1
+            fi
+          fi
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            native/launcher/target
+          key: launcher-${{ hashFiles('native/launcher/src/**', 'native/launcher/include/**', 'native/launcher/Cargo.*', 'native/launcher/fetch-idevice.sh', 'native/patches/**', 'bin/setup', 'desktop/core/src/**', 'desktop/core/Cargo.*') }}
+          restore-keys: launcher-
+      - id: codex-voice-sim
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/codex-voice/aarch64-apple-ios-sim/target/aarch64-apple-ios-sim/release/libpoki_codex_voice.a
+            build/codex-voice/aarch64-apple-ios-sim/target/aarch64-apple-ios-sim/release/libpoki_codex_voice.a.sha256
+          key: codex-voice-sim-v1-${{ hashFiles('native/codex-voice/build.sh', 'native/codex-voice/Cargo.toml', 'native/codex-voice/src/**', 'native/codex-voice/poki_codex_voice.h') }}
       - name: PokiLauncher for the simulator
         run: |
           set -euo pipefail
@@ -72,29 +104,44 @@ jobs:
           rustup update stable --no-self-update && rustup default stable
           rustup target add aarch64-apple-ios-sim
           cargo build --release --locked --target aarch64-apple-ios-sim --manifest-path native/launcher/Cargo.toml
+      - name: Codex Voice for the simulator
+        if: steps.codex-voice-sim.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          native/codex-voice/build.sh build aarch64-apple-ios-sim
+          ls -la build/codex-voice/aarch64-apple-ios-sim/target/aarch64-apple-ios-sim/release/libpoki_codex_voice.a
       - name: Build Poki (Debug) for the simulator
         run: |
           set -euo pipefail
           native/ios-app/scripts/make-assets.sh
-          brew install xcodegen
+          command -v xcodegen >/dev/null || brew install xcodegen
           xcodegen generate --spec native/ios-app/project.yml
           mkdir -p build
           xcodebuild build \
             -project native/ios-app/Poki.xcodeproj -scheme Poki -configuration Debug \
             -destination 'generic/platform=iOS Simulator' -derivedDataPath build/sim \
-            CODE_SIGNING_ALLOWED=NO ARCHS=arm64 2>&1 | tee build/sim.log | grep -E "error:|BUILD (SUCCEEDED|FAILED)" || true
-          test -d build/sim/Build/Products/Debug-iphonesimulator/Poki.app || { grep -B2 -A6 "error:" build/sim.log | head -80; exit 1; }
+            CODE_SIGNING_ALLOWED=NO ARCHS=arm64 2>&1 | tee build/sim.log | grep --line-buffered -E "error:|BUILD (SUCCEEDED|FAILED)" || true
+          if ! grep -q "BUILD SUCCEEDED" build/sim.log || [ ! -d build/sim/Build/Products/Debug-iphonesimulator/Poki.app ]; then
+            grep -B2 -A6 "error:" build/sim.log | head -80
+            exit 1
+          fi
       - name: Boot a simulator
         run: |
-          UDID=$(xcrun simctl list devices available -j | python3 -c "
+          set -euo pipefail
+          read -r RUNTIME TYPE < <(xcrun simctl list runtimes -j | python3 -c '
           import json, sys
-          d = json.load(sys.stdin)['devices']
-          sdk = tuple(int(v) for v in sys.argv[1].split('.'))
-          def version(r): return tuple(int(v) for v in r.rsplit('iOS-', 1)[1].split('-'))
-          runtimes = sorted((r for r in d if 'iOS-' in r and version(r) <= sdk), key=version, reverse=True)
-          phones = [x for r in runtimes for x in d[r] if x['name'].startswith('iPhone')]
-          pro = [x for x in phones if 'Pro' in x['name'] and 'Max' not in x['name']]
-          print((pro or phones)[0]['udid'])" "$(xcrun --sdk iphonesimulator --show-sdk-version)")
+          sdk = tuple(int(v) for v in sys.argv[1].split("."))
+          def version(r): return tuple(int(v) for v in r["version"].split("."))
+          runtimes = sorted((x for x in json.load(sys.stdin)["runtimes"] if x["isAvailable"] and x.get("platform") == "iOS" and version(x) <= sdk), key=version, reverse=True)
+          for r in runtimes:
+              phones = [t for t in r.get("supportedDeviceTypes", []) if t["name"].startswith("iPhone") and "Pro" in t["name"] and "Max" not in t["name"] and "Duo" not in t["name"]]
+              if phones:
+                  print(r["identifier"], phones[0]["identifier"])
+                  break
+          else:
+              sys.exit("no available iOS runtime supports an iPhone Pro simulator")
+          ' "$(xcrun --sdk iphonesimulator --show-sdk-version)")
+          UDID="$(xcrun simctl create poki-agent-chat "$TYPE" "$RUNTIME")"
           echo "UDID=$UDID" >> "$GITHUB_ENV"
           xcrun simctl boot "$UDID"
           xcrun simctl bootstatus "$UDID" -b
@@ -157,6 +204,7 @@ jobs:
       - name: Summary
         if: always()
         run: |
+          [ -s build/inprocess-probe.json ] || exit 0
           { echo "## Poki agent chat, end to end ($(git rev-parse --short HEAD))"; echo; echo '```'; python3 -c "
           import json
           for e in json.load(open('build/inprocess-probe.json')):
@@ -175,7 +223,8 @@ jobs:
             build/*.ips
 
   app:
-    runs-on: macos-latest
+    # Poki uses iOS 27 SDK APIs (WKNavigationAction.mainFrameNavigation) and needs Xcode 27, matching build-ipa.
+    runs-on: xcode-27
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -183,9 +232,55 @@ jobs:
 
       - name: Use the newest Xcode
         run: |
-          XCODE="$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
+          set -euo pipefail
+          has_metal() {
+            local said
+            said="$(xcrun metal --version 2>&1 || true)"
+            case "$said" in
+              *"missing Metal Toolchain"*|*"unable to find utility"*) return 1 ;;
+            esac
+            return 0
+          }
+          XCODE="$(ls -d /Applications/Xcode_*.app | grep -v -i beta | sort -V | tail -1)"
           sudo xcode-select -s "$XCODE/Contents/Developer"
           xcodebuild -version && xcrun --sdk iphoneos --show-sdk-version
+          if ! has_metal; then
+            echo "$XCODE has no Metal Toolchain on this runner: downloading it"
+            xcodebuild -downloadComponent MetalToolchain
+            if ! has_metal; then
+              echo "::error::The Metal Toolchain is missing for $XCODE and could not be downloaded."
+              exit 1
+            fi
+          fi
+
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            native/launcher/target
+          key: launcher-${{ hashFiles('native/launcher/src/**', 'native/launcher/include/**', 'native/launcher/Cargo.*', 'native/launcher/fetch-idevice.sh', 'native/patches/**', 'bin/setup', 'desktop/core/src/**', 'desktop/core/Cargo.*') }}
+          restore-keys: launcher-
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            build/codex-voice/aarch64-apple-ios/target/aarch64-apple-ios/release/libpoki_codex_voice.a
+            build/codex-voice/aarch64-apple-ios/target/aarch64-apple-ios/release/libpoki_codex_voice.a.sha256
+          key: codex-voice-v1-${{ hashFiles('native/codex-voice/build.sh', 'native/codex-voice/Cargo.toml', 'native/codex-voice/src/**', 'native/codex-voice/poki_codex_voice.h') }}
+      - id: codex-voice-sim
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/codex-voice/aarch64-apple-ios-sim/target/aarch64-apple-ios-sim/release/libpoki_codex_voice.a
+            build/codex-voice/aarch64-apple-ios-sim/target/aarch64-apple-ios-sim/release/libpoki_codex_voice.a.sha256
+          key: codex-voice-sim-v1-${{ hashFiles('native/codex-voice/build.sh', 'native/codex-voice/Cargo.toml', 'native/codex-voice/src/**', 'native/codex-voice/poki_codex_voice.h') }}
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            build/app-external
+            build/app-local
+            ~/Library/Developer/Xcode/DerivedData/ModuleCache.noindex
+          key: ipa-xcode27-${{ github.sha }}
+          restore-keys: ipa-xcode27-
 
       - name: PokiLauncher (Rust static library for the phone)
         run: |
@@ -199,6 +294,13 @@ jobs:
           ls -la native/launcher/target/aarch64-apple-ios/release/libpoki_launcher.a
           # The C ABI's symbols, for the log (the app's link step is the real check).
           (nm -g native/launcher/target/aarch64-apple-ios/release/libpoki_launcher.a 2>/dev/null | grep -E '_poki_(launcher|pair|string)_' | sort -u) || echo "nm listed no poki_ symbols"
+
+      - name: Codex Voice for the simulator
+        if: steps.codex-voice-sim.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          native/codex-voice/build.sh build aarch64-apple-ios-sim
+          ls -la build/codex-voice/aarch64-apple-ios-sim/target/aarch64-apple-ios-sim/release/libpoki_codex_voice.a
 
       - name: Local connection tests
         run: swift test --package-path native/ios/PokiLoopback
@@ -223,7 +325,7 @@ jobs:
       - name: Assets and project
         run: |
           native/ios-app/scripts/make-assets.sh
-          brew install xcodegen
+          command -v xcodegen >/dev/null || brew install xcodegen
           xcodegen generate --spec native/ios-app/project.yml
           xcodegen generate --spec native/ios-app/project-external.yml
 
@@ -236,21 +338,24 @@ jobs:
           mkdir -p build out
           VERSION="${RELEASE_VERSION:-$(cat native/ios-app/VERSION)}"
           BUILD="${RELEASE_BUILD:-${{ github.run_number }}}"
-          for edition in local external; do
+          # Build external first so it reuses main's ipa-xcode27 cache, then build local in the
+          # same DerivedData (after clearing Poki.app) so Swift packages are not compiled twice.
+          for edition in external local; do
             project=Poki
             ipa=Poki-unsigned.ipa
             if [ "$edition" = external ]; then project=PokiExternal; ipa=Poki-external-unsigned.ipa; fi
+            rm -rf build/app-external/Build/Products/Release-iphoneos/Poki.app build/app-external/Build/Products/Release-iphoneos/PokiWidgets.appex
             xcodebuild build \
               -project "native/ios-app/$project.xcodeproj" -scheme Poki -configuration Release \
-              -destination generic/platform=iOS -derivedDataPath "build/app-$edition" \
+              -destination generic/platform=iOS -derivedDataPath build/app-external \
               CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO ARCHS=arm64 \
               MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD" \
-              2>&1 | tee "build/app-$edition.log" | grep -E "error:|BUILD (SUCCEEDED|FAILED)|\*\* "
+              2>&1 | tee "build/app-$edition.log" | grep --line-buffered -E "error:|BUILD (SUCCEEDED|FAILED)|\*\* "
             native/ios-app/scripts/package-app.sh \
-              "build/app-$edition/Build/Products/Release-iphoneos/Poki.app" \
+              build/app-external/Build/Products/Release-iphoneos/Poki.app \
               "$edition" "out/$ipa" "$VERSION" "$BUILD"
             python3 native/ios-app/scripts/export-signing.py \
-              "build/app-$edition/Build/Products/Release-iphoneos/Poki.app" \
+              build/app-external/Build/Products/Release-iphoneos/Poki.app \
               "$edition" "out/signing/$edition"
           done
           ditto -c -k --keepParent out/signing out/Poki-signing.zip
@@ -270,11 +375,28 @@ jobs:
           xcodebuild build \
             -project native/ios-app/Poki.xcodeproj -scheme Poki -configuration Debug \
             -destination 'generic/platform=iOS Simulator' -derivedDataPath build/sim \
-            CODE_SIGNING_ALLOWED=NO ARCHS=arm64 2>&1 | tee build/sim.log | grep -E "error:|BUILD (SUCCEEDED|FAILED)" || true
+            -clonedSourcePackagesDirPath build/app-external/SourcePackages \
+            CODE_SIGNING_ALLOWED=NO ARCHS=arm64 2>&1 | tee build/sim.log | grep --line-buffered -E "error:|BUILD (SUCCEEDED|FAILED)" || true
           APP=build/sim/Build/Products/Debug-iphonesimulator/Poki.app
-          test -d "$APP"
-          RUNTIME=$(xcrun simctl list runtimes -j | python3 -c 'import json,sys;r=[x for x in json.load(sys.stdin)["runtimes"] if x["isAvailable"] and x["platform"]=="iOS"];print(r[-1]["identifier"])')
-          TYPE=$(xcrun simctl list devicetypes -j | python3 -c 'import json,sys;d=[x for x in json.load(sys.stdin)["devicetypes"] if x["name"].startswith("iPhone") and "Pro" in x["name"] and "Max" not in x["name"]];print(d[-1]["identifier"])')
+          if ! grep -q "BUILD SUCCEEDED" build/sim.log || [ ! -d "$APP" ]; then
+            grep -B2 -A6 "error:" build/sim.log | head -80
+            exit 1
+          fi
+          read -r RUNTIME TYPE PADTYPE < <(xcrun simctl list runtimes -j | python3 -c '
+          import json, sys
+          sdk = tuple(int(v) for v in sys.argv[1].split("."))
+          def version(r): return tuple(int(v) for v in r["version"].split("."))
+          runtimes = sorted((x for x in json.load(sys.stdin)["runtimes"] if x["isAvailable"] and x.get("platform") == "iOS" and version(x) <= sdk), key=version, reverse=True)
+          for r in runtimes:
+              types = r.get("supportedDeviceTypes", [])
+              phones = [t for t in types if t["name"].startswith("iPhone") and "Pro" in t["name"] and "Max" not in t["name"] and "Duo" not in t["name"]]
+              pads = [t for t in types if t["name"].startswith("iPad Pro") and "11" in t["name"]]
+              if phones and pads:
+                  print(r["identifier"], phones[0]["identifier"], pads[0]["identifier"])
+                  break
+          else:
+              sys.exit("no available iOS runtime supports both iPhone Pro and iPad Pro 11")
+          ' "$(xcrun --sdk iphonesimulator --show-sdk-version)")
           UDID=$(xcrun simctl create poki-smoke "$TYPE" "$RUNTIME")
           echo "UDID=$UDID" >> "$GITHUB_ENV"
           xcrun simctl boot "$UDID" && xcrun simctl bootstatus "$UDID" -b
@@ -329,7 +451,6 @@ jobs:
             done
           done
           # The same screens on an iPad (regular width), where Poki sits in a window beside the app it drives.
-          PADTYPE=$(xcrun simctl list devicetypes -j | python3 -c 'import json,sys;d=[x for x in json.load(sys.stdin)["devicetypes"] if x["name"].startswith("iPad Pro") and "11" in x["name"]];print(d[-1]["identifier"])')
           PAD=$(xcrun simctl create poki-pad "$PADTYPE" "$RUNTIME")
           xcrun simctl boot "$PAD" && xcrun simctl bootstatus "$PAD" -b
           xcrun simctl install "$PAD" "$APP"
@@ -358,6 +479,7 @@ jobs:
           set -o pipefail
           xcodebuild test -project native/ios-app/Poki.xcodeproj -scheme Poki -configuration Debug \
             -destination "platform=iOS Simulator,id=$UDID" -derivedDataPath build/sim \
+            -clonedSourcePackagesDirPath build/app-external/SourcePackages \
             -only-testing:PokiTests CODE_SIGNING_ALLOWED=NO 2>&1 | tee build/tests.log | grep -E "Test Case|error:|failed|passed|TEST (SUCCEEDED|FAILED)|\*\* " 
           grep -q "TEST SUCCEEDED" build/tests.log
 
