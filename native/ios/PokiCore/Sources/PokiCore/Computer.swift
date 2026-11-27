@@ -1407,7 +1407,7 @@ final class Computer: @unchecked Sendable {
             }
         }
 
-        let numberTap = local && !finish && sensitive == nil && config.quickRead() ? numberTapTarget(actions) : nil
+        let numberTap = local && !finish && sensitive == nil && config.quickRead() ? await numberTapTarget(actions) : nil
         let generation = nextActionGeneration()
         let beforePicture = lastPicture
         let actionsStarted = now()
@@ -1934,50 +1934,195 @@ final class Computer: @unchecked Sendable {
         return p >= policy.minConfidence
     }
 
+    static let keypadControlTypes: Set<String> = ["Button", "Key"]
+    static let displayControlTypes: Set<String> = ["StaticText", "Other", "TextField"]
+
+    static func isNumericKeypad(_ all: [Element]) -> Bool {
+        guard !all.contains(where: \.isSecure) else { return false }
+        var digits = Set<UInt8>()
+        var letterKeys = Set<UInt8>()
+        for element in all where !element.fromPicture && keypadControlTypes.contains(element.type) {
+            guard let label = element.label?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  label.utf8.count == 1, let ascii = label.utf8.first else { continue }
+            if (48...57).contains(ascii) {
+                digits.insert(ascii)
+            } else if element.type == "Key" && ((65...90).contains(ascii) || (97...122).contains(ascii)) {
+                letterKeys.insert(ascii)
+            }
+        }
+        return digits.count >= 6 && letterKeys.count < 3
+    }
+
+    static func unlabeledNumericDisplay(in all: [Element], screen: ScreenSize) -> Rect? {
+        guard isNumericKeypad(all) else { return nil }
+        let digitKeys = all.filter { element in
+            guard !element.fromPicture, keypadControlTypes.contains(element.type),
+                  let label = element.label?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  label.utf8.count == 1, let ascii = label.utf8.first else { return false }
+            return (48...57).contains(ascii)
+        }
+        guard let keypadTopY = digitKeys.map(\.frame.y).min() else { return nil }
+        let controls = all.filter { !($0.fromPicture) && keypadControlTypes.contains($0.type) }
+        let candidates = all.filter { element in
+            guard !element.fromPicture,
+                  element.type == "Other" || element.type == "StaticText",
+                  element.text.isEmpty else { return false }
+            let f = element.frame
+            guard f.x >= 0, f.y >= 64, f.maxX <= screen.width, f.maxY <= screen.height,
+                  f.maxY <= keypadTopY + 12,
+                  f.width >= screen.width * 0.4,
+                  f.height >= 36, f.height <= screen.height * 0.35,
+                  f.width > f.height else { return false }
+            guard !controls.contains(where: { $0.contains(element) || $0.frame.intersects(f) }) else { return false }
+            guard !all.contains(where: { element.contains($0) && !$0.text.isEmpty }) else { return false }
+            return true
+        }
+        guard let best = candidates.max(by: { a, b in
+            if abs(a.frame.maxY - b.frame.maxY) > 12 { return a.frame.maxY < b.frame.maxY }
+            if a.depth != b.depth { return a.depth < b.depth }
+            return a.frame.area > b.frame.area
+        }) else { return nil }
+        let siblingsSameBand = candidates.filter { other in
+            other.node != best.node
+                && !other.contains(best) && !best.contains(other)
+                && abs(other.frame.centre.y - best.frame.centre.y) <= 20
+        }
+        guard siblingsSameBand.isEmpty else { return nil }
+        return best.frame
+    }
+
+    private enum NumericDisplayKind: Equatable {
+        case labeled(index: Int, frame: Rect, beforeValue: String)
+        case unlabeled(frame: Rect)
+
+        var frame: Rect {
+            switch self {
+            case .labeled(_, let frame, _), .unlabeled(let frame): frame
+            }
+        }
+    }
+
+    private enum DisplayObservation: Equatable {
+        case labeled(String)
+        case unlabeledStable
+        case layoutChanged
+    }
+
+    private static let clearKeyLabels: Set<String> = ["AC", "C", "Clear", "All Clear", "Delete", "Backspace", "⌫"]
+
+    private static func matchesStableKeypadLayout(_ observed: [Element], baseline: [Element]) -> Bool {
+        guard observed.count == baseline.count else { return false }
+        var clearToggles = 0
+        for (a, b) in zip(observed, baseline) {
+            if a == b { continue }
+            guard clearToggles == 0,
+                  keypadControlTypes.contains(a.type), a.type == b.type,
+                  a.frame == b.frame,
+                  let la = a.label, let lb = b.label,
+                  clearKeyLabels.contains(la), clearKeyLabels.contains(lb) else {
+                return false
+            }
+            var normalized = a
+            normalized.label = b.label
+            normalized.value = b.value
+            normalized.identifier = b.identifier
+            guard normalized == b else { return false }
+            clearToggles += 1
+        }
+        return true
+    }
+
     private struct NumberTapTarget {
         let app: String
         let screen: ScreenSize
         let elements: [Element]
-        let display: Int
+        let kind: NumericDisplayKind
         let expected: String
         let before: PictureSketch
 
-        var beforeValue: String { elements[display].text }
-        var frame: Rect { elements[display].frame }
+        var beforeValue: String? {
+            if case .labeled(_, _, let value) = kind { return value }
+            return nil
+        }
+        var frame: Rect { kind.frame }
         var pictureRegion: Rect {
             Rect(x: frame.x / screen.width, y: frame.y / screen.height,
                  width: frame.width / screen.width, height: frame.height / screen.height)
         }
 
-        func displayValue(in observed: [Element]) -> String? {
+        func observeDisplay(in observed: [Element]) -> DisplayObservation {
             var visible = listable(observed, screen)
-            guard visible.count == elements.count else { return nil }
-            let value = visible[display].text
-            visible[display].label = elements[display].label
-            visible[display].value = elements[display].value
-            return visible == elements ? value : nil
+            switch kind {
+            case .labeled(let display, _, _):
+                guard visible.count == elements.count else { return .layoutChanged }
+                let value = visible[display].text
+                visible[display].label = elements[display].label
+                visible[display].value = elements[display].value
+                return Computer.matchesStableKeypadLayout(visible, baseline: elements) ? .labeled(value) : .layoutChanged
+            case .unlabeled(let frame):
+                if Computer.matchesStableKeypadLayout(visible, baseline: elements),
+                   observed.contains(where: { ($0.type == "Other" || $0.type == "StaticText") && $0.frame.described == frame.described && $0.text.isEmpty }) {
+                    return .unlabeledStable
+                }
+                if visible.count == elements.count + 1,
+                   let addedIndex = visible.firstIndex(where: { Computer.displayControlTypes.contains($0.type) && $0.frame.described == frame.described }) {
+                    let value = visible[addedIndex].text
+                    visible.remove(at: addedIndex)
+                    return Computer.matchesStableKeypadLayout(visible, baseline: elements) ? .labeled(value) : .layoutChanged
+                }
+                return .layoutChanged
+            }
+        }
+
+        func confirmsDisplay(in observed: [Element]) -> Bool {
+            switch observeDisplay(in: observed) {
+            case .labeled(let value): return value == expected
+            case .unlabeledStable: return true
+            case .layoutChanged: return false
+            }
         }
     }
 
-    private func numberTapTarget(_ actions: [JSON]) -> NumberTapTarget? {
+    static func numericDisplayOCRText(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        let allowed = CharacterSet(charactersIn: "0123456789Oo.,-− ")
+        guard trimmed.unicodeScalars.allSatisfy({ allowed.contains($0) }) else { return trimmed }
+        return trimmed.replacingOccurrences(of: "O", with: "0").replacingOccurrences(of: "o", with: "0")
+    }
+
+    private func numberTapTarget(_ actions: [JSON]) async -> NumberTapTarget? {
         guard actions.count == 1, let tap = actions[0]["tap"], let ref = tap.int ?? tap["ref"]?.int,
-              let key = refs[ref], !key.fromPicture, key.type == "Button", let digit = key.label,
+              let key = refs[ref], !key.fromPicture, Self.keypadControlTypes.contains(key.type), let digit = key.label,
               digit.utf8.count == 1, let ascii = digit.utf8.first, (49...57).contains(ascii),
               selectedPane == nil, let front = lastForeground, front.pokiPane == nil, let app = front.bundleID,
               app != "com.apple.springboard", let screen = size, let picture = lastPicture, picture.hash == nil,
               let readAt = lastTreeAt, let pictureAt = lastPNGAt, now() - min(readAt, pictureAt) < 5,
               abs(readAt - pictureAt) < Runner.pictureLagLimit, !lastAll.contains(where: \.isSecure) else { return nil }
         let elements = listable(lastAll, screen)
-        let buttons = lastAll.filter { $0.type == "Button" || $0.type == "Key" }
+        let buttons = lastAll.filter { Self.keypadControlTypes.contains($0.type) }
         let displays = elements.indices.filter { index in
             let element = elements[index]
-            return element.type == "StaticText" && element.text == "0"
+            return Self.displayControlTypes.contains(element.type) && element.text == "0"
                 && !buttons.contains { $0.contains(element) || $0.frame.intersects(element.frame) }
         }
-        guard displays.count == 1, let display = displays.first else { return nil }
-        let frame = elements[display].frame
-        guard frame.x >= 0, frame.y >= 0, frame.maxX <= screen.width, frame.maxY <= screen.height else { return nil }
-        return NumberTapTarget(app: app, screen: screen, elements: elements, display: display, expected: digit, before: picture)
+        if displays.count == 1, let display = displays.first {
+            let frame = elements[display].frame
+            guard frame.x >= 0, frame.y >= 0, frame.maxX <= screen.width, frame.maxY <= screen.height else { return nil }
+            return NumberTapTarget(app: app, screen: screen, elements: elements, kind: .labeled(index: display, frame: frame, beforeValue: "0"), expected: digit, before: picture)
+        }
+        guard displays.isEmpty, let frame = Self.unlabeledNumericDisplay(in: lastAll, screen: screen),
+              let png = lastPNG else { return nil }
+        let region = Rect(x: frame.x / screen.width, y: frame.y / screen.height,
+                          width: frame.width / screen.width, height: frame.height / screen.height)
+        guard let text = try? await withDeadline(0.5, "checking numeric display before tap", {
+            TextRecognizer.recognize(png: png, in: region)
+        }), text.count == 1, let current = text.first,
+              Self.numericDisplayOCRText(current.text) == "0",
+              region.contains(current.box.centre) else {
+            return nil
+        }
+        return NumberTapTarget(app: app, screen: screen, elements: elements, kind: .unlabeled(frame: frame), expected: digit, before: picture)
     }
 
     private struct TapRead {
@@ -2009,11 +2154,14 @@ final class Computer: @unchecked Sendable {
                 result.reason = "foreground changed or is unknown"
                 return result
             }
-            guard let value = target.displayValue(in: reading.elements) else {
+            let observation = target.observeDisplay(in: reading.elements)
+            guard observation != .layoutChanged else {
                 result.reason = "screen layout changed"
                 return result
             }
-            if value == target.expected, result.targetAt == nil { result.targetAt = reading.treeAt }
+            if case .labeled(let value) = observation, value == target.expected, result.targetAt == nil {
+                result.targetAt = reading.treeAt
+            }
             guard reading.notes.isEmpty, reading.screenshotCompanion == nil, let png = reading.png,
                   let pictureAt = reading.firstPictureAt, let treeAt = reading.treeAt,
                   treeAt - pictureAt <= Runner.pictureLagLimit else {
@@ -2025,8 +2173,21 @@ final class Computer: @unchecked Sendable {
             lastUnconfirmed = withoutPicture
             let picture = PictureSketch(png: png)
             let displayChanged = picture.differs(from: target.before, inside: target.frame, on: target.screen) == true
-            if value != target.beforeValue || displayChanged { sawChange = true }
-            if value == target.expected, displayChanged {
+            let matchesExpected: Bool
+            switch observation {
+            case .labeled(let value):
+                if value != target.beforeValue || displayChanged { sawChange = true }
+                matchesExpected = value == target.expected && displayChanged
+            case .unlabeledStable:
+                if displayChanged {
+                    sawChange = true
+                    if result.targetAt == nil { result.targetAt = reading.treeAt }
+                }
+                matchesExpected = displayChanged
+            case .layoutChanged:
+                matchesExpected = false
+            }
+            if matchesExpected {
                 if !triedFirstPicture, let change = picture.change(from: target.before), change.share < 0.08 {
                     triedFirstPicture = true
                     let confirmation = await confirmTapPicture(reading, target: target, until: deadline)
@@ -2140,7 +2301,7 @@ final class Computer: @unchecked Sendable {
                                                 countsAsMiss: false, appAfterSource: true) else { return nil }
         let treeAt = now()
         guard tree.foreground.bundleID == target.app, tree.foreground.pokiPane == nil,
-              target.displayValue(in: tree.elements) == target.expected else { return nil }
+              target.confirmsDisplay(in: tree.elements) else { return nil }
         return (tree.elements, tree.foreground, treeAt)
     }
 
