@@ -1464,7 +1464,10 @@ final class Computer: @unchecked Sendable {
                 }
             } else if pause > 0.01 {
                 await sleep(seconds: pause)
-                did.append("paused \(Int((pause * 1000).rounded())) ms before reading")
+                let waited = (screenObservation?.reason == "launched app not in front before launch pause") ? now() - readStarted : pause
+                did.append("paused \(Int((waited * 1000).rounded())) ms before reading")
+            } else if screenObservation?.reason == "launched app not in front before launch pause" {
+                did.append("paused \(Int(((now() - readStarted) * 1000).rounded())) ms before reading")
             }
         }
         if local, finish, actions.isEmpty, error == nil {
