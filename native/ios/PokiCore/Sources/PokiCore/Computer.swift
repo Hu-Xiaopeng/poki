@@ -636,7 +636,7 @@ final class Computer: @unchecked Sendable {
         if let selectedPane, selectedPane.session != session, (hasLocalWorkspace || !beginsTask() || pane == nil) { return workspaceInUse() }
         async let locked = isLocked()
         var unlocked = false
-        if localTask != nil, await locked {
+        if await locked {
             unlocked = await unlockForLocalTask(until: until)
             if !unlocked { unlocked = await !isLocked() }
         }
@@ -1284,7 +1284,7 @@ final class Computer: @unchecked Sendable {
         }
         let onlyButtons = actions.allSatisfy { $0["button"] != nil || $0["wait"] != nil }
         if !onlyButtons, await isLocked() {
-            guard localTask != nil, !harmless else {
+            guard !harmless else {
                 return ToolResult(text: "screen: locked. Nothing was sent. The owner has to unlock the phone; call look once they have.", jpeg: nil, isError: true, waitingForOwner: true)
             }
             guard await unlockForLocalTask(until: until) else {
