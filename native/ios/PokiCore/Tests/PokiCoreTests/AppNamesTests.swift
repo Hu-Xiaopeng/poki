@@ -274,6 +274,15 @@ final class AppNamesTests: XCTestCase {
         XCTAssertTrue(result.text.contains("paused "), result.text)
     }
 
+    func testSlowUnchangedLaunchStillReportsThePause() async {
+        let (core, wda) = core()
+        _ = await core.call("look", [:])
+        wda.delay("GET /source", 0.95)
+        let result = await core.call("do", ["actions": [["launch": "Clock"]]])
+        XCTAssertFalse(result.isError, result.text)
+        XCTAssertTrue(result.text.contains("paused "), "Launch pause elapsed inside readAfterLaunch should still be reported: \(result.text)")
+    }
+
     /// Clock in front from its launch on: its screen is drawn `after` seconds later.
     func clockOnLaunch(_ wda: FakeWDA, drawnAfter after: Double = 0, reads: Double = 0) {
         wda.set("POST /wda/apps/activate") { [wda] _ in
