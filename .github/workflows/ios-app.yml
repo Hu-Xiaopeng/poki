@@ -57,7 +57,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     # Poki uses iOS 27 SDK APIs (WKNavigationAction.mainFrameNavigation) and needs Xcode 27, matching build-ipa.
     runs-on: xcode-27
-    timeout-minutes: 60
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
         with: { ref: "${{ inputs.ref }}" }
@@ -91,7 +91,7 @@ jobs:
           key: launcher-${{ hashFiles('native/launcher/src/**', 'native/launcher/include/**', 'native/launcher/Cargo.*', 'native/launcher/fetch-idevice.sh', 'native/patches/**', 'bin/setup', 'desktop/core/src/**', 'desktop/core/Cargo.*') }}
           restore-keys: launcher-
       - id: codex-voice-sim
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: |
             build/codex-voice/aarch64-apple-ios-sim/target/aarch64-apple-ios-sim/release/libpoki_codex_voice.a
@@ -110,6 +110,15 @@ jobs:
           set -euo pipefail
           native/codex-voice/build.sh build aarch64-apple-ios-sim
           ls -la build/codex-voice/aarch64-apple-ios-sim/target/aarch64-apple-ios-sim/release/libpoki_codex_voice.a
+      - name: Save Codex Voice simulator cache
+        if: steps.codex-voice-sim.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            build/codex-voice/aarch64-apple-ios-sim/target/aarch64-apple-ios-sim/release/libpoki_codex_voice.a
+            build/codex-voice/aarch64-apple-ios-sim/target/aarch64-apple-ios-sim/release/libpoki_codex_voice.a.sha256
+          key: codex-voice-sim-v1-${{ hashFiles('native/codex-voice/build.sh', 'native/codex-voice/Cargo.toml', 'native/codex-voice/src/**', 'native/codex-voice/poki_codex_voice.h') }}
       - name: Build Poki (Debug) for the simulator
         run: |
           set -euo pipefail
@@ -225,7 +234,7 @@ jobs:
   app:
     # Poki uses iOS 27 SDK APIs (WKNavigationAction.mainFrameNavigation) and needs Xcode 27, matching build-ipa.
     runs-on: xcode-27
-    timeout-minutes: 90
+    timeout-minutes: 105
     steps:
       - uses: actions/checkout@v4
         with: { ref: "${{ inputs.ref }}" }
@@ -266,13 +275,6 @@ jobs:
             build/codex-voice/aarch64-apple-ios/target/aarch64-apple-ios/release/libpoki_codex_voice.a
             build/codex-voice/aarch64-apple-ios/target/aarch64-apple-ios/release/libpoki_codex_voice.a.sha256
           key: codex-voice-v1-${{ hashFiles('native/codex-voice/build.sh', 'native/codex-voice/Cargo.toml', 'native/codex-voice/src/**', 'native/codex-voice/poki_codex_voice.h') }}
-      - id: codex-voice-sim
-        uses: actions/cache@v4
-        with:
-          path: |
-            build/codex-voice/aarch64-apple-ios-sim/target/aarch64-apple-ios-sim/release/libpoki_codex_voice.a
-            build/codex-voice/aarch64-apple-ios-sim/target/aarch64-apple-ios-sim/release/libpoki_codex_voice.a.sha256
-          key: codex-voice-sim-v1-${{ hashFiles('native/codex-voice/build.sh', 'native/codex-voice/Cargo.toml', 'native/codex-voice/src/**', 'native/codex-voice/poki_codex_voice.h') }}
       - uses: actions/cache/restore@v4
         with:
           path: |
@@ -294,13 +296,6 @@ jobs:
           ls -la native/launcher/target/aarch64-apple-ios/release/libpoki_launcher.a
           # The C ABI's symbols, for the log (the app's link step is the real check).
           (nm -g native/launcher/target/aarch64-apple-ios/release/libpoki_launcher.a 2>/dev/null | grep -E '_poki_(launcher|pair|string)_' | sort -u) || echo "nm listed no poki_ symbols"
-
-      - name: Codex Voice for the simulator
-        if: steps.codex-voice-sim.outputs.cache-hit != 'true'
-        run: |
-          set -euo pipefail
-          native/codex-voice/build.sh build aarch64-apple-ios-sim
-          ls -la build/codex-voice/aarch64-apple-ios-sim/target/aarch64-apple-ios-sim/release/libpoki_codex_voice.a
 
       - name: Local connection tests
         run: swift test --package-path native/ios/PokiLoopback
@@ -344,7 +339,7 @@ jobs:
             project=Poki
             ipa=Poki-unsigned.ipa
             if [ "$edition" = external ]; then project=PokiExternal; ipa=Poki-external-unsigned.ipa; fi
-            rm -rf build/app-external/Build/Products/Release-iphoneos/Poki.app build/app-external/Build/Products/Release-iphoneos/PokiWidgets.appex
+            rm -rf build/app-external/Build/Products/Release-iphoneos/Poki.app build/app-external/Build/Products/Release-iphoneos/PokiWidgets.appex build/app-external/Build/Products/Release-iphoneos/PokiTunnel.appex
             xcodebuild build \
               -project "native/ios-app/$project.xcodeproj" -scheme Poki -configuration Release \
               -destination generic/platform=iOS -derivedDataPath build/app-external \
@@ -366,6 +361,33 @@ jobs:
             B=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' build/ipa-Info.plist)
             echo "$ipa: Poki $V ($B)"; test "$V" = "$VERSION" && test "$B" = "$BUILD"
           done
+
+      # Restored after the device IPA build so fast unit tests run first and this step can reuse
+      # the simulator cache saved by agent-chat during a cold workflow_dispatch run.
+      - id: codex-voice-sim
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            build/codex-voice/aarch64-apple-ios-sim/target/aarch64-apple-ios-sim/release/libpoki_codex_voice.a
+            build/codex-voice/aarch64-apple-ios-sim/target/aarch64-apple-ios-sim/release/libpoki_codex_voice.a.sha256
+          key: codex-voice-sim-v1-${{ hashFiles('native/codex-voice/build.sh', 'native/codex-voice/Cargo.toml', 'native/codex-voice/src/**', 'native/codex-voice/poki_codex_voice.h') }}
+
+      - name: Codex Voice for the simulator
+        if: steps.codex-voice-sim.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          native/codex-voice/build.sh build aarch64-apple-ios-sim
+          ls -la build/codex-voice/aarch64-apple-ios-sim/target/aarch64-apple-ios-sim/release/libpoki_codex_voice.a
+
+      - name: Save Codex Voice simulator cache
+        if: steps.codex-voice-sim.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            build/codex-voice/aarch64-apple-ios-sim/target/aarch64-apple-ios-sim/release/libpoki_codex_voice.a
+            build/codex-voice/aarch64-apple-ios-sim/target/aarch64-apple-ios-sim/release/libpoki_codex_voice.a.sha256
+          key: codex-voice-sim-v1-${{ hashFiles('native/codex-voice/build.sh', 'native/codex-voice/Cargo.toml', 'native/codex-voice/src/**', 'native/codex-voice/poki_codex_voice.h') }}
 
       # The app on the iOS Simulator: it launches, stays up, and draws its first screen. The launcher
       # cannot reach a simulator's developer services, so this checks the shell, not automation.
