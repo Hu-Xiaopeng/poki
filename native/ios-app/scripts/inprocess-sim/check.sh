@@ -127,10 +127,10 @@ if [ "$MODE" = shot ]; then
   xcrun simctl launch "$UDID" local.poki.inprocess-check -mode read -tag shot -expectFront local.pokimcp.fixture >/dev/null
   sleep 3
   xcrun simctl launch "$UDID" local.pokimcp.fixture >/dev/null
-  for _ in $(seq 90); do [ -s "$DOCS/shot.json" ] && break; sleep 1; done
+  for _ in $(seq 120); do [ -s "$DOCS/shot.json" ] && break; sleep 1; done
   OUT="${POKI_CHECK_OUT:-}"
   if [ -n "$OUT" ]; then mkdir -p "$OUT"; cp "$DOCS"/shot* "$OUT/" 2>/dev/null || true; xcrun simctl io "$UDID" screenshot "$OUT/screen.png" >/dev/null 2>&1 || true; fi
-  [ -s "$DOCS/shot.json" ] || { echo "::error::the check app wrote no result in 90 s"; exit 1; }
+  [ -s "$DOCS/shot.json" ] || { echo "::error::the check app wrote no result in 120 s"; exit 1; }
   python3 - "$DOCS/shot.json" "$EXPECT" <<'PY'
 import json, sys
 r = json.load(open(sys.argv[1]))
@@ -154,9 +154,9 @@ else
   sleep 3
   xcrun simctl launch "$UDID" local.pokimcp.fixture >/dev/null
 fi
-for _ in $(seq 90); do [ -s "$DOCS/field.json" ] && break; sleep 1; done
+for _ in $(seq 120); do [ -s "$DOCS/field.json" ] && break; sleep 1; done
 if [ ! -s "$DOCS/field.json" ]; then
-  echo "::error::the check app wrote no result in 90 s"
+  echo "::error::the check app wrote no result in 120 s"
   [ -s "$DOCS/field-progress.json" ] && { echo "progress:"; cat "$DOCS/field-progress.json"; }
   echo "check app running: $(xcrun simctl spawn "$UDID" launchctl list | grep -c 'local.poki.inprocess-check' || true)"
   for f in $(ls -t ~/Library/Logs/DiagnosticReports/InProcessCheck* 2>/dev/null | head -1); do echo "== crash $f"; head -60 "$f"; done

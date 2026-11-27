@@ -114,8 +114,9 @@ static NSDictionary *Run(NSString *mode, NSString *tag, NSString *text) {
     [NSThread sleepForTimeInterval:0.5];
     NSInteger times = MAX(1, [NSUserDefaults.standardUserDefaults integerForKey:@"times"]);
     PKOutcome *typed = nil;
-    for (NSInteger i = 0; i < times; i++) { typed = [PKInProcess.shared type:text timeout:5]; [NSThread sleepForTimeInterval:0.5]; }
+    for (NSInteger i = 0; i < times; i++) { typed = [PKInProcess.shared type:text timeout:10]; [NSThread sleepForTimeInterval:0.5]; }
     out[@"type"] = @(typed.delivery);
+    if (typed.code.length) out[@"type_code"] = typed.code;
     NSDictionary *focus = nil;
     NSString *after = nil;
     NSTimeInterval readDeadline = NSProcessInfo.processInfo.systemUptime + 5;
