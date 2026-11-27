@@ -225,8 +225,9 @@ final class AppModel {
 
     let host = AppCoreHost()
     let autoUnlock = AutoUnlock()
-    // The 0.4.7 candidate keeps Automatic Unlock off, including existing opt-ins.
-    nonisolated static let automaticUnlockAvailable = false
+    // Local build: Automatic Unlock is on so a locked iPhone can be woken and
+    // unlocked for the owner's own sessions (Keychain passcode, on-device only).
+    nonisolated static let automaticUnlockAvailable = true
     var supportsAutoUnlock: Bool { Self.automaticUnlockAvailable && UIDevice.current.userInterfaceIdiom == .phone }
     /// Poki Runner or Poki's own process, fixed for this launch (Debug tab).
     let automationPath = AutomationPath.current
