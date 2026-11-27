@@ -1851,8 +1851,7 @@ final class PictureSketchTests: XCTestCase {
 }
 
 final class TextRecognitionTests: XCTestCase {
-    /// Vision reads a rendered word back, with its box in parts of the picture from the top left.
-    func testVisionReadsTextWithTopLeftBoxes() throws {
+    private static func samplePNG() throws -> Data {
         let width = 600, height = 300
         let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
         context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
@@ -1866,13 +1865,54 @@ final class TextRecognitionTests: XCTestCase {
         let destination = CGImageDestinationCreateWithData(data, UTType.png.identifier as CFString, 1, nil)!
         CGImageDestinationAddImage(destination, image, nil)
         XCTAssertTrue(CGImageDestinationFinalize(destination))
+        return data as Data
+    }
+
+    /// Vision reads a rendered word back, with its box in parts of the picture from the top left.
+    func testVisionReadsTextWithTopLeftBoxes() throws {
         // On a thread of its own with a limit, so a Vision that never answers fails the test instead of the run.
-        let png = data as Data
+        let png = try Self.samplePNG()
         let box = LockedBox<[RecognizedText]??>(nil)
         let done = DispatchSemaphore(value: 0)
         Thread { box.value = .some(TextRecognizer.recognize(png: png)); done.signal() }.start()
         XCTAssertEqual(done.wait(timeout: .now() + 60), .success, "Vision did not answer within 60 s")
-        let found = try XCTUnwrap(box.value ?? nil)
+        let found: [RecognizedText]
+        if let recognized = box.value ?? nil {
+            found = recognized
+        } else {
+            var details: [String] = []
+            if let source = CGImageSourceCreateWithData(png as CFData, nil),
+               let image = CGImageSourceCreateImageAtIndex(source, 0, nil) {
+                for attempt in TextRecognizer.attempts(for: nil) {
+                    do {
+                        let results = try TextRecognizer.performVision(image, attempt: attempt)
+                        details.append("\(attempt): ok(\(results.count))")
+                    } catch {
+                        details.append("\(attempt): \(error)")
+                    }
+                }
+            }
+            XCTFail("Vision returned nil (\(details.joined(separator: "; ")))")
+            return
+        }
+        let line = try XCTUnwrap(found.first { $0.text.contains("13") }, "\(found)")
+        XCTAssertLessThan(line.box.y, 0.5, "the box is measured from the top: \(line.box)")
+    }
+
+    /// When Vision's default GPU/ANE compute path throws (e.g. headless macOS VMs or backgrounded iOS),
+    /// TextRecognizer retries on the CPU compute device and still recognizes the text.
+    func testVisionFallsBackToCPUWhenDefaultComputeDeviceFails() throws {
+        let png = try Self.samplePNG()
+        var attempts: [TextRecognizer.Attempt] = []
+        let found = try XCTUnwrap(TextRecognizer.recognize(png: png) { image, attempt in
+            attempts.append(attempt)
+            if !attempt.cpuOnly {
+                throw NSError(domain: "PokiCoreTests.Vision", code: 9, userInfo: [NSLocalizedDescriptionKey: "simulated GPU inference failure"])
+            }
+            return try TextRecognizer.performVision(image, attempt: attempt)
+        })
+        XCTAssertEqual(attempts.first?.cpuOnly, false)
+        XCTAssertTrue(attempts.dropFirst().contains { $0.cpuOnly })
         let line = try XCTUnwrap(found.first { $0.text.contains("13") }, "\(found)")
         XCTAssertLessThan(line.box.y, 0.5, "the box is measured from the top: \(line.box)")
     }

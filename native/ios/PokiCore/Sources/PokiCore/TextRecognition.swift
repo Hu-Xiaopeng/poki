@@ -2,6 +2,9 @@ import Foundation
 #if canImport(Vision) && canImport(ImageIO)
 import Vision
 import ImageIO
+#if canImport(CoreML)
+import CoreML
+#endif
 #endif
 
 /// A line of text read from the screenshot. `box` is in parts of the picture (0 to 1, from the top
@@ -20,6 +23,38 @@ public struct RecognizedText: Sendable, Equatable {
 enum TextRecognizer {
     static func recognize(png: Data, in region: Rect? = nil) -> [RecognizedText]? {
         #if canImport(Vision) && canImport(ImageIO)
+        return recognize(png: png, in: region, run: performVision)
+        #else
+        return nil
+        #endif
+    }
+
+    #if canImport(Vision) && canImport(ImageIO)
+    struct Attempt: Equatable {
+        let level: VNRequestTextRecognitionLevel
+        let detectLanguage: Bool
+        let cpuOnly: Bool
+    }
+
+    static func attempts(for region: Rect?) -> [Attempt] {
+        let primaryLevel: VNRequestTextRecognitionLevel = region == nil ? .accurate : .fast
+        let detectLanguage = region == nil
+        var list = [
+            Attempt(level: primaryLevel, detectLanguage: detectLanguage, cpuOnly: false),
+            Attempt(level: primaryLevel, detectLanguage: detectLanguage, cpuOnly: true),
+        ]
+        if region == nil {
+            list.append(Attempt(level: .accurate, detectLanguage: false, cpuOnly: true))
+            list.append(Attempt(level: .fast, detectLanguage: false, cpuOnly: true))
+        }
+        return list
+    }
+
+    static func recognize(
+        png: Data,
+        in region: Rect? = nil,
+        run: (CGImage, Attempt) throws -> [VNRecognizedTextObservation]
+    ) -> [RecognizedText]? {
         guard let source = CGImageSourceCreateWithData(png as CFData, nil), let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
         let input: CGImage
         let area: Rect
@@ -36,24 +71,45 @@ enum TextRecognizer {
             input = image
             area = Rect(x: 0, y: 0, width: 1, height: 1)
         }
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = region == nil ? .accurate : .fast
-        request.usesLanguageCorrection = false
-        if #available(iOS 16, macOS 13, *), region == nil {
-            request.automaticallyDetectsLanguage = true
+        var observations: [VNRecognizedTextObservation]?
+        for attempt in attempts(for: region) {
+            if let results = try? run(input, attempt) {
+                observations = results
+                break
+            }
         }
-        do { try VNImageRequestHandler(cgImage: input, options: [:]).perform([request]) } catch { return nil }
-        return (request.results ?? []).compactMap { observation in
+        guard let observations else { return nil }
+        return observations.compactMap { observation in
             guard let best = observation.topCandidates(1).first, !best.string.isEmpty else { return nil }
             let b = observation.boundingBox
             let box = Rect(x: area.x + Double(b.minX) * area.width, y: area.y + Double(1 - b.maxY) * area.height,
                            width: Double(b.width) * area.width, height: Double(b.height) * area.height)
             return RecognizedText(text: best.string, box: box)
         }
-        #else
-        return nil
-        #endif
     }
+
+    static func performVision(_ input: CGImage, attempt: Attempt) throws -> [VNRecognizedTextObservation] {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = attempt.level
+        request.usesLanguageCorrection = false
+        if #available(iOS 16, macOS 13, *), attempt.detectLanguage {
+            request.automaticallyDetectsLanguage = true
+        }
+        if attempt.cpuOnly {
+            #if canImport(CoreML)
+            if let stages = try? request.supportedComputeStageDevices {
+                for (stage, devices) in stages {
+                    if let cpu = devices.first(where: { if case .cpu = $0 { return true }; return false }) {
+                        request.setComputeDevice(cpu, for: stage)
+                    }
+                }
+            }
+            #endif
+        }
+        try VNImageRequestHandler(cgImage: input, options: [:]).perform([request])
+        return request.results ?? []
+    }
+    #endif
 }
 
 extension CoreHost {
