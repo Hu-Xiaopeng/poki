@@ -5381,6 +5381,8 @@ extension VoiceModelTests {
 
         h.link.play(["type": "session.input_transcript.delta", "delta": "在备忘录写上『现在可以发送了』这句话", "start_ms": 2000, "end_ms": 2800],
                     ["type": "session.delegation.created", "delegation": ["id": "d3"]])
+        h.link.call("look-after-quote", "look", arguments: "{}", delegation: "d3")
+        await h.time.settle()
         h.link.call("send-after-quote-ref", "do", arguments: #"{"actions":[{"tap":3}]}"#, delegation: "d3")
         h.link.call("send-after-quote-pt", "do", arguments: #"{"actions":[{"tap":[355,77]}]}"#, delegation: "d3")
         await h.time.settle()
@@ -5428,6 +5430,7 @@ extension VoiceModelTests {
         }
 
         var msgSubmitted = 0
+        var msgTyped: [String] = []
         let msgHarness = Harness(phoneTool: { name, arguments in
             let args = (try? JSONSerialization.jsonObject(with: Data(arguments.utf8))) as? [String: Any] ?? [:]
             if name == "open_app" {
@@ -5436,7 +5439,10 @@ extension VoiceModelTests {
             if name == "do" {
                 for action in args["actions"] as? [[String: Any]] ?? [] {
                     if (action["key"] as? String)?.lowercased() == "return" { msgSubmitted += 1 }
-                    if (action["type"] as? String)?.contains(where: \.isNewline) == true { msgSubmitted += 1 }
+                    if let text = action["type"] as? String {
+                        if text.contains(where: \.isNewline) { msgSubmitted += 1 }
+                        else { msgTyped.append(text) }
+                    }
                 }
             }
             return ("ok", false, nil)
@@ -5446,10 +5452,12 @@ extension VoiceModelTests {
                              ["type": "session.delegation.created", "delegation": ["id": "m1"]])
         msgHarness.link.call("msg-open", "open_app", arguments: #"{"app":"微信"}"#, delegation: "m1")
         await msgHarness.time.settle()
+        msgHarness.link.call("msg-type-ok", "do", arguments: #"{"actions":[{"tap":1},{"type":"周六"}]}"#, delegation: "m1")
         msgHarness.link.call("msg-ret", "do", arguments: #"{"actions":[{"key":"return"}]}"#, delegation: "m1")
         msgHarness.link.call("msg-nl-end", "do", arguments: #"{"actions":[{"type":"周六\n"}]}"#, delegation: "m1")
         msgHarness.link.call("msg-nl-mid", "do", arguments: #"{"actions":[{"type":"第一行\n第二行"}]}"#, delegation: "m1")
         await msgHarness.time.settle()
+        XCTAssertEqual(msgTyped, ["周六"], "Focusing and typing into a messaging TextField labeled 发消息 must still succeed under forbidsSend.")
         XCTAssertEqual(msgSubmitted, 0, "Messaging return key and any newline must be blocked while forbidsSend is active.")
         msgHarness.voice.stop()
     }
@@ -5482,7 +5490,6 @@ extension VoiceModelTests {
             await h.time.settle()
             XCTAssertEqual(openedApps, ["com.apple.mobilenotes"])
 
-            // While u2 is committed but not yet transcribed, an early proposal must not fall back to r1 and execute.
             h.link.play(["type": "input_audio_buffer.committed", "item_id": u2],
                         ["type": "response.created", "response": ["id": "r2-early"]],
                         ["type": "response.output_item.done", "response_id": "r2-early",
@@ -5827,6 +5834,118 @@ extension VoiceModelTests {
             let postStop = await codex.callTool("do", #"{"actions":[{"tap":2},{"type":"多余内容"}]}"#)
             XCTAssertEqual(postStop?.failed, true, "Subscription voice must block writes after stop.")
             XCTAssertEqual(drafts, ["周六"])
+        }
+    }
+
+    func testRealtimeChitchatAndTranscriptFailuresNeverDeadlockAndLiveGateDenialRequestsResponse() async throws {
+        var executed: [String] = []
+        let screen = "app: Notes   read: 2026-11-27T01:00:01Z (12 ms)\nelements (2):\n" + #" 1 Button "新建备忘录" [340,800,44,44]"# + "\n" + #" 2 TextView "周五" [16,120,360,400]"#
+        let rt = Harness(phoneTool: { name, _ in
+            executed.append(name)
+            return (screen, false, nil)
+        })
+        await rt.talk()
+        rt.link.play(["type": "input_audio_buffer.committed", "item_id": "u1"],
+                     ["type": "conversation.item.input_audio_transcription.completed", "item_id": "u1", "transcript": "打开备忘录，写周五"],
+                     ["type": "response.created", "response": ["id": "r1"]],
+                     ["type": "response.output_item.done", "response_id": "r1",
+                      "item": ["type": "function_call", "call_id": "c1", "name": "do", "arguments": #"{"actions":[{"tap":1},{"type":"周五"}]}"#]],
+                     ["type": "response.done", "response": ["id": "r1"]])
+        await rt.time.settle()
+        XCTAssertEqual(executed, ["do"])
+
+        rt.link.play(["type": "input_audio_buffer.committed", "item_id": "u-chat"],
+                     ["type": "conversation.item.input_audio_transcription.completed", "item_id": "u-chat", "transcript": "好的"],
+                     ["type": "response.created", "response": ["id": "r-chat"]],
+                     ["type": "response.done", "response": ["id": "r-chat"]],
+                     ["type": "input_audio_buffer.committed", "item_id": "u-fail"],
+                     ["type": "conversation.item.input_audio_transcription.failed", "item_id": "u-fail"],
+                     ["type": "response.created", "response": ["id": "r-fail"]],
+                     ["type": "response.done", "response": ["id": "r-fail"]])
+        await rt.time.settle()
+
+        rt.link.play(["type": "input_audio_buffer.committed", "item_id": "u2"],
+                     ["type": "response.created", "response": ["id": "r2"]],
+                     ["type": "response.output_item.done", "response_id": "r2",
+                      "item": ["type": "function_call", "call_id": "c-early", "name": "do", "arguments": #"{"actions":[{"tap":2},{"type":"周五"}]}"#]],
+                     ["type": "response.done", "response": ["id": "r2"]])
+        await rt.time.settle()
+        XCTAssertEqual(executed, ["do"], "Early tool call before u2 transcript must be held.")
+        let createsBeforeTranscript = rt.link.sent.filter { $0["type"] as? String == "response.create" }.count
+
+        rt.link.play(["type": "conversation.item.input_audio_transcription.completed", "item_id": "u2", "transcript": "不要发这条信息，改成周六，先别传送"])
+        await rt.time.settle()
+        let createsAfterTranscript = rt.link.sent.filter { $0["type"] as? String == "response.create" }.count
+        XCTAssertEqual(createsAfterTranscript, createsBeforeTranscript + 1, "Non-stop transcript arriving after awaitingUtteranceTranscript denial must resume Realtime.")
+        XCTAssertEqual(rt.voice.goalTracker.activeGoal?.targetApp, "com.apple.mobilenotes")
+        XCTAssertEqual(rt.voice.goalTracker.activeGoal?.forbidsSend, true)
+
+        rt.link.play(["type": "response.created", "response": ["id": "r3"]],
+                     ["type": "response.output_item.done", "response_id": "r3",
+                      "item": ["type": "function_call", "call_id": "c-look", "name": "look", "arguments": "{}"]],
+                     ["type": "response.done", "response": ["id": "r3"]])
+        await rt.time.settle()
+        rt.link.play(["type": "response.created", "response": ["id": "r4"]],
+                     ["type": "response.output_item.done", "response_id": "r4",
+                      "item": ["type": "function_call", "call_id": "c-edit", "name": "do", "arguments": #"{"actions":[{"tap":2},{"type":"周六","clear":true}]}"#]],
+                     ["type": "response.done", "response": ["id": "r4"]])
+        await rt.time.settle()
+        XCTAssertEqual(executed, ["do", "look", "do"], "Chitchat and failed transcription must not deadlock later turns.")
+        rt.voice.stop()
+
+        let live = Harness(phoneTool: { _, _ in (screen, false, nil) })
+        await live.liveTalk()
+        live.link.play(["type": "session.input_transcript.delta", "delta": "打开备忘录，写周五", "start_ms": 0, "end_ms": 500],
+                       ["type": "session.delegation.created", "delegation": ["id": "d1"]])
+        live.link.call("l-draft", "do", arguments: #"{"actions":[{"tap":1},{"type":"周五"}]}"#, delegation: "d1")
+        await live.time.settle()
+        live.link.play(["type": "session.input_transcript.delta", "delta": "改成周六，先别发", "start_ms": 900, "end_ms": 1400],
+                       ["type": "session.delegation.created", "delegation": ["id": "d2"]])
+        let liveCreatesBefore = live.link.sent.filter { $0["type"] as? String == "response.create" }.count
+        live.link.call("l-blind", "do", arguments: #"{"actions":[{"tap":2},{"type":"周六","clear":true}]}"#, delegation: "d2")
+        await live.time.settle()
+        let liveCreatesAfter = live.link.sent.filter { $0["type"] as? String == "response.create" }.count
+        XCTAssertEqual(liveCreatesAfter, liveCreatesBefore + 1, "Recoverable Live gate denial must request response.create so the backend can recover with look.")
+        live.voice.stop()
+
+        let media = Harness(recentAppAudio: { .transcript("打开微信", stillCapturing: { true }) })
+        await media.talk()
+        media.link.play(["type": "input_audio_buffer.committed", "item_id": "m-u1"],
+                        ["type": "response.created", "response": ["id": "m-r1"]],
+                        ["type": "response.output_item.done", "response_id": "m-r1",
+                         "item": ["type": "function_call", "call_id": "m-c1", "name": "do", "arguments": #"{"actions":[{"launch":"com.tencent.xin"}]}"#]])
+        await media.time.settle()
+        XCTAssertNil(media.voice.goalTracker.activeGoal, "App Audio sessions must never create or mutate voice goals.")
+        media.voice.stop()
+
+        try await withChatGPTSelected { chatGPTStorage in
+            let firstStarted = expectation(description: "Codex first runner request started")
+            let batchDone = expectation(description: "Codex batch finished")
+            let (firstMayFinish, releaseFirst) = AsyncStream<Void>.makeStream()
+            let transport = VoiceRunnerTransport(firstStarted: firstStarted, firstMayFinish: firstMayFinish)
+            let runner = Runner(url: URL(string: "http://voice-runner.test")!, transport: transport)
+            let codex = FakeSubscriptionVoice()
+            let ch = Harness(codex: codex, storage: chatGPTStorage, phoneTool: { _, _ in
+                defer { batchDone.fulfill() }
+                do {
+                    _ = try await runner.raw("POST", "/first")
+                    _ = try await runner.raw("POST", "/second")
+                    return ("both", false, nil)
+                } catch {
+                    return ("cancelled", true, nil)
+                }
+            })
+            defer { ch.voice.stop() }
+            await ch.connect()
+            codex.notify("thread/realtime/transcript/done", ["role": "user", "text": "打开备忘录，写周五"])
+            let toolTask = Task { await codex.callTool("do", #"{"actions":[{"type":"周五"}]}"#) }
+            await fulfillment(of: [firstStarted], timeout: 2)
+            codex.notify("thread/realtime/transcript/done", ["role": "user", "text": "停止"])
+            releaseFirst.finish()
+            _ = await toolTask.value
+            await fulfillment(of: [batchDone], timeout: 2)
+            let ops = await transport.operations
+            XCTAssertEqual(ops, ["/first"], "Subscription voice stop must cancel in-flight batches before the second runner request.")
         }
     }
 }

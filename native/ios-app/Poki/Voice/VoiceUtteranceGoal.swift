@@ -115,6 +115,12 @@ struct VoiceObservedElement: Equatable, Sendable {
     let type: String
     let text: String
     let frame: VoiceScreenRect?
+
+    var isTextInput: Bool {
+        let lower = type.lowercased()
+        return lower.contains("textfield") || lower.contains("textview")
+            || lower.contains("searchfield") || lower.contains("securetextfield")
+    }
 }
 
 struct VoiceObservedScreenUpdate: Equatable, Sendable {
@@ -150,28 +156,32 @@ struct VoiceObservedScreen: Equatable, Sendable {
         var goneRefs: Set<Int> = []
         var isDelta = false
         var sawFreshScreen = false
+        var sawElements = false
         var readFailed = false
 
         for rawLine in output.split(whereSeparator: \.isNewline) {
             let line = rawLine.trimmingCharacters(in: .whitespaces)
             let lower = line.lowercased()
-            if lower.hasPrefix("read: failed") || lower.contains("no element tree:") {
+            if !sawElements && (lower.hasPrefix("read: failed") || lower.contains("no element tree:")) {
                 readFailed = true
             }
-            if lower.hasPrefix("app:") {
+            if !sawElements && lower.hasPrefix("app:") {
                 if let parsedApp = parseAppHeader(line) { app = parsedApp }
                 continue
             }
             if lower.hasPrefix("elements:") && lower.contains("none changed") {
                 isDelta = true
+                sawElements = true
                 continue
             }
             if lower.hasPrefix("elements (") {
                 if lower.contains("only the changed are listed") { isDelta = true }
                 if lower.contains("a new screen") { sawFreshScreen = true; isDelta = false }
+                sawElements = true
                 continue
             }
             if lower.hasPrefix("gone since the last read:") {
+                sawElements = true
                 let tail = String(line.dropFirst("gone since the last read:".count))
                 for part in tail.split(separator: ",") {
                     let trimmed = part.trimmingCharacters(in: .whitespaces)
@@ -181,11 +191,13 @@ struct VoiceObservedScreen: Equatable, Sendable {
                 continue
             }
             if lower.hasPrefix("found by scroll_to:") {
+                sawElements = true
                 let tail = line.dropFirst("found by scroll_to:".count).trimmingCharacters(in: .whitespaces)
                 if let element = parseElementLine(tail) { elements[element.ref] = element }
                 continue
             }
             if let element = parseElementLine(line) {
+                sawElements = true
                 elements[element.ref] = element
             }
         }
@@ -309,7 +321,17 @@ enum VoiceAppIdentity {
         ("com.apple.mobilemail", ["com.apple.mobilemail", "邮件", "郵件", "mail"]),
         ("com.apple.mobilecal", ["com.apple.mobilecal", "日历", "日曆", "calendar"]),
         ("com.apple.mobilesafari", ["com.apple.mobilesafari", "safari", "浏览器"]),
+        ("net.whatsapp.whatsapp", ["net.whatsapp.whatsapp", "whatsapp"]),
+        ("ph.telegra.telegraph", ["ph.telegra.telegraph", "telegram"]),
+        ("com.burbn.instagram", ["com.burbn.instagram", "instagram"]),
+        ("com.atebits.tweetie2", ["com.atebits.tweetie2", "twitter"]),
+        ("com.facebook.messenger", ["com.facebook.messenger", "messenger"]),
+        ("com.hammerandchisel.discord", ["com.hammerandchisel.discord", "discord"]),
+        ("com.tinyspeck.chatlyio", ["com.tinyspeck.chatlyio", "slack"]),
     ]
+
+    private static let genericMessageNouns: Set<String> = ["信息", "讯息", "短信", "邮件"]
+    private static let messageNounModifiers = ["这条", "那条", "一条", "该", "这封", "那封", "一封", "发条", "发个", "把"]
 
     static let messagingApps: Set<String> = [
         "com.apple.mobilesms",
@@ -338,6 +360,12 @@ enum VoiceAppIdentity {
         for entry in aliases {
             for name in entry.names {
                 if let range = latestOccurrence(of: name, in: lower) {
+                    if genericMessageNouns.contains(name) {
+                        let prefix = lower[..<range.lowerBound]
+                        if messageNounModifiers.contains(where: { prefix.hasSuffix($0) }) {
+                            continue
+                        }
+                    }
                     if best == nil || range.lowerBound > best!.position {
                         best = (entry.canonical, range.lowerBound)
                     }
@@ -443,11 +471,6 @@ struct VoiceToolProposal: Equatable, Sendable {
         }
     }
 
-    var isReadScreen: Bool {
-        if case .readScreen = kind { return true }
-        return false
-    }
-
     var opensAppOnly: String? {
         switch kind {
         case .openApp(let app, _):
@@ -537,19 +560,19 @@ struct VoiceToolProposal: Equatable, Sendable {
         let app = screen.app ?? targetApp
         let isMessaging = app.map { VoiceAppIdentity.messagingApps.contains($0) } ?? false
         let hasUnframedSendControl = screen.elements.values.contains {
-            $0.frame == nil && Self.matchesSendOrCommit($0.text)
+            !$0.isTextInput && $0.frame == nil && Self.matchesSendOrCommit($0.text)
         }
         return actions.contains { action in
             if let hint = action.hintText, Self.matchesSendOrCommit(hint) { return true }
             switch action.kind {
             case .tap(let target), .longPress(let target):
                 if case .point = target, hasUnframedSendControl { return true }
-                return targetMatches(target, in: screen, predicate: Self.matchesSendOrCommit)
+                return targetMatches(target, in: screen, skipTextInputs: true, predicate: Self.matchesSendOrCommit)
             case .typeText(let text, let target, _):
                 if isMessaging && text.contains(where: \.isNewline) { return true }
                 if let target {
                     if case .point = target, hasUnframedSendControl { return true }
-                    return targetMatches(target, in: screen, predicate: Self.matchesSendOrCommit)
+                    return targetMatches(target, in: screen, skipTextInputs: true, predicate: Self.matchesSendOrCommit)
                 }
                 return false
             case .key(let key):
@@ -568,7 +591,7 @@ struct VoiceToolProposal: Equatable, Sendable {
             out.append("tap:ref:\(ref)")
             if let element = screen.elements[ref] {
                 if Self.matchesDraftCreation(element.text) { out.append("draft:create") }
-                if Self.matchesSendOrCommit(element.text) { out.append("send:\(element.ref)") }
+                if !element.isTextInput, Self.matchesSendOrCommit(element.text) { out.append("send:\(element.ref)") }
             }
         case .point(let x, let y):
             let hits = screen.elements(hitting: x, y: y)
@@ -578,7 +601,7 @@ struct VoiceToolProposal: Equatable, Sendable {
                 for element in hits {
                     out.append("tap:ref:\(element.ref)")
                     if Self.matchesDraftCreation(element.text) { out.append("draft:create") }
-                    if Self.matchesSendOrCommit(element.text) { out.append("send:\(element.ref)") }
+                    if !element.isTextInput, Self.matchesSendOrCommit(element.text) { out.append("send:\(element.ref)") }
                 }
             }
         case .text(let text):
@@ -589,12 +612,22 @@ struct VoiceToolProposal: Equatable, Sendable {
         return out
     }
 
-    private func targetMatches(_ target: VoiceActionTarget, in screen: VoiceObservedScreen, predicate: (String) -> Bool) -> Bool {
+    private func targetMatches(
+        _ target: VoiceActionTarget,
+        in screen: VoiceObservedScreen,
+        skipTextInputs: Bool = false,
+        predicate: (String) -> Bool
+    ) -> Bool {
         switch target {
         case .ref(let ref):
-            return screen.elements[ref].map { predicate($0.text) } ?? false
+            guard let element = screen.elements[ref] else { return false }
+            if skipTextInputs && element.isTextInput { return false }
+            return predicate(element.text)
         case .point(let x, let y):
-            return screen.elements(hitting: x, y: y).contains { predicate($0.text) }
+            return screen.elements(hitting: x, y: y).contains { element in
+                if skipTextInputs && element.isTextInput { return false }
+                return predicate(element.text)
+            }
         case .text(let text):
             return predicate(text)
         }
@@ -606,7 +639,7 @@ struct VoiceToolProposal: Equatable, Sendable {
     ]
 
     private static let sendCommitPhrases = [
-        "发送", "发出去", "发送消息", "发消息", "寄出", "提交", "发布", "分享", "共享",
+        "发送", "传送", "发出去", "发送消息", "发消息", "寄出", "提交", "发布", "分享", "共享",
         "send", "submit", "post", "publish", "share", "send message", "deliver",
     ]
 
@@ -670,7 +703,7 @@ struct VoiceToolProposal: Equatable, Sendable {
             if let x = (dict["x"] as? NSNumber)?.doubleValue, let y = (dict["y"] as? NSNumber)?.doubleValue {
                 return .point(x, y)
             }
-            if let text = (dict["text"] as? String) ?? (dict["label"] as? String) { return .text(text) }
+            if let text = (dict["text"] as? String) ?? (dict["label"] as? String) ?? (dict["find"] as? String) { return .text(text) }
         }
         return nil
     }
@@ -756,7 +789,6 @@ struct VoiceGoalStep: Equatable, Sendable {
     let isReadOnly: Bool
     let isPureNavigation: Bool
     var outcome: VoiceStepOutcome
-    var summary: String
 }
 
 struct VoiceGoal: Equatable, Sendable {
@@ -831,6 +863,7 @@ enum VoiceTaskRelationClassifier {
     ]
     private static let forbidSendCues = [
         "先别发", "先别发送", "别发", "别发送", "不要发", "不要发送", "先不发", "不发送", "先不发送",
+        "先别传送", "别传送", "不要传送", "先不传送", "暂不传送",
         "先不要发", "暂时不发", "暂不发", "千万别发", "千万不要发", "别发出", "不要发出", "不发出", "不发出去",
         "先别把", "别把这条消息发", "先存草稿", "只保存草稿", "保存为草稿", "保存草稿", "存成草稿", "存草稿",
         "先留在草稿", "留在草稿", "放草稿", "放进草稿", "留着别发", "先留着", "别提交", "不要提交", "先不提交", "暂不提交",
@@ -840,6 +873,7 @@ enum VoiceTaskRelationClassifier {
     ]
     private static let allowSendCues = [
         "现在发", "可以发", "发出去", "发出去吧", "现在发送", "可以发送", "现在可以发送", "现在可以发", "可以发了", "现在发吧", "发送吧", "发吧",
+        "现在传送", "可以传送",
         "send it now", "send now", "go ahead and send", "you can send",
     ]
     private static let allowSendBlockers = [
@@ -850,7 +884,7 @@ enum VoiceTaskRelationClassifier {
         "暂时不", "暂不", "先不要", "千万不要", "千万别", "先别", "先不", "不要", "还没", "别", "不", "勿", "莫",
     ]
     private static let sendActionTargets = [
-        "发出去", "发过去", "发送", "发出", "发给", "发消息", "提交", "发布", "寄出", "推送",
+        "发出去", "发过去", "发送", "传送", "发出", "发给", "发消息", "提交", "发布", "寄出", "推送",
     ]
     private static let wholeGoalReplaceCues = [
         "不用备忘录了", "别用备忘录了", "换个任务", "全部重写", "从头来", "重来", "不要写备忘录了",
@@ -1237,6 +1271,7 @@ struct VoiceGoalTracker: Equatable, Sendable {
     private var itemByResponse: [String: String] = [:]
     private var pendingResponsesByItem: [String: [String]] = [:]
     private var pendingUtteranceItems: Set<String> = []
+    private var resolvedTranscriptItems: Set<String> = []
     private var latestCommittedItemID: String?
     private var goalIDByCall: [String: VoiceGoalID] = [:]
     private var provisionalGoalByItem: [String: VoiceGoalID] = [:]
@@ -1245,15 +1280,24 @@ struct VoiceGoalTracker: Equatable, Sendable {
 
     mutating func noteCommittedUtterance(itemID: String) {
         guard !itemID.isEmpty else { return }
-        if bindingByItem[itemID] == nil {
-            latestCommittedItemID = itemID
-            pendingUtteranceItems.insert(itemID)
-        }
+        guard bindingByItem[itemID] == nil, !resolvedTranscriptItems.contains(itemID) else { return }
+        latestCommittedItemID = itemID
+        pendingUtteranceItems.insert(itemID)
     }
 
     mutating func clearPendingUtterance(itemID: String?) {
         guard let itemID, !itemID.isEmpty else { return }
         pendingUtteranceItems.remove(itemID)
+        resolvedTranscriptItems.insert(itemID)
+        if latestCommittedItemID == itemID {
+            latestCommittedItemID = nil
+        }
+        if let pending = pendingResponsesByItem.removeValue(forKey: itemID) {
+            let fallback = activeGoal.map { UtteranceBinding(goalID: $0.id, revision: $0.revision, source: $0.source) } ?? latestBinding
+            if let fallback {
+                for responseID in pending { bindingByResponse[responseID] = fallback }
+            }
+        }
     }
 
     mutating func ingestCompleteUtterance(
@@ -1265,16 +1309,18 @@ struct VoiceGoalTracker: Equatable, Sendable {
     ) -> VoiceUtteranceRecord {
         if let itemID {
             pendingUtteranceItems.remove(itemID)
+            resolvedTranscriptItems.insert(itemID)
         }
         let utteranceID = itemID ?? delegationID ?? nextUtteranceID()
 
-        if let itemID, let provisionalID = provisionalGoalByItem.removeValue(forKey: itemID),
+        if source.authorizesDeviceWork,
+           let itemID, let provisionalID = provisionalGoalByItem.removeValue(forKey: itemID),
            var active = activeGoal, active.id == provisionalID {
             let assessment = VoiceTaskRelationClassifier.classify(text: text, source: source, activeGoal: nil)
             active.originalUtterance = text
             active.latestUtterance = text
             active.source = source
-            active.targetApp = active.targetApp ?? VoiceAppIdentity.detectApp(in: text)
+            active.targetApp = active.targetApp ?? VoiceAppIdentity.detectApp(in: VoiceTaskRelationClassifier.stripQuotedSpans(text))
             active.forbidsSend = active.forbidsSend || assessment.forbidsSend
             if assessment.relation == .stop {
                 active.stopped = true
@@ -1300,6 +1346,8 @@ struct VoiceGoalTracker: Equatable, Sendable {
             if !source.authorizesDeviceWork {
                 let binding = UtteranceBinding(goalID: nil, revision: nil, source: source)
                 recordBinding(binding, itemID: itemID, delegationID: delegationID)
+            } else {
+                clearPendingUtterance(itemID: itemID)
             }
             record = VoiceUtteranceRecord(
                 id: utteranceID, source: source, text: text, relation: .chitchat,
@@ -1395,6 +1443,12 @@ struct VoiceGoalTracker: Equatable, Sendable {
             itemByResponse[responseID] = effectiveItem
             if let binding = bindingByItem[effectiveItem] {
                 bindingByResponse[responseID] = binding
+            } else if resolvedTranscriptItems.contains(effectiveItem) {
+                if let active = activeGoal {
+                    bindingByResponse[responseID] = UtteranceBinding(goalID: active.id, revision: active.revision, source: active.source)
+                } else if let latestBinding {
+                    bindingByResponse[responseID] = latestBinding
+                }
             } else {
                 pendingUtteranceItems.insert(effectiveItem)
                 pendingResponsesByItem[effectiveItem, default: []].append(responseID)
@@ -1465,8 +1519,7 @@ struct VoiceGoalTracker: Equatable, Sendable {
             createsDraft: createsDraft,
             isReadOnly: proposal.isReadOnly,
             isPureNavigation: proposal.isPureNavigation,
-            outcome: .running,
-            summary: ""
+            outcome: .running
         )
         mutateGoal(id: goalID) { goal in
             if goal.targetApp == nil, let opened = proposal.opensApp {
@@ -1486,7 +1539,6 @@ struct VoiceGoalTracker: Equatable, Sendable {
         mutateGoal(id: goalID) { goal in
             guard let index = goal.steps.firstIndex(where: { $0.callID == callID }) else { return }
             goal.steps[index].outcome = outcome
-            goal.steps[index].summary = Self.compactSummary(output)
             if let update { goal.observedScreen.apply(update) }
             if outcome == .unknown {
                 goal.needsFreshEvidence = true
@@ -1536,6 +1588,7 @@ struct VoiceGoalTracker: Equatable, Sendable {
         itemByResponse.removeAll()
         pendingResponsesByItem.removeAll()
         pendingUtteranceItems.removeAll()
+        resolvedTranscriptItems.removeAll()
         latestCommittedItemID = nil
         latestBinding = nil
     }
@@ -1702,10 +1755,5 @@ struct VoiceGoalTracker: Equatable, Sendable {
 
     private static func bytesPrefix(_ utf8: String.UTF8View, upTo end: String.UTF8View.Index) -> Substring.UTF8View {
         utf8[..<end]
-    }
-
-    private static func compactSummary(_ output: String) -> String {
-        let firstLine = output.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
-        return String(firstLine.prefix(120))
     }
 }
