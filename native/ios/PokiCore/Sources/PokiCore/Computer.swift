@@ -165,6 +165,18 @@ final class Computer: @unchecked Sendable {
         let swipes: Int
     }
     var scrollObservation: ScrollTargetObservation?
+    struct PathReadObservation {
+        let inputAt: Double
+        let elements: [Element]
+        let foreground: Foreground
+        let treeAt: Double
+        let png: Data?
+        let pictureStartedAt: Double?
+        let pictureAt: Double?
+        let hadInput: Bool
+    }
+    var pathObservation: PathReadObservation?
+    var lastTypeTree: (elements: [Element], foreground: Foreground, at: Double)?
     var actionGeneration: UInt64 = 0
     private var preparedCapture: PreparedCapture?
     /// Shapes touches and typing after a person's (see `Humanize`); off sends the legacy schedules.
@@ -1051,6 +1063,14 @@ final class Computer: @unchecked Sendable {
     }
 
     private func canActInPathAfterAuthorization(_ step: JSON, evidence: ScreenEvidence) -> Bool {
+        if let branches = step["choose"]?.array, !branches.isEmpty {
+            return branches.allSatisfy { branch in
+                if let substeps = branch["steps"]?.array {
+                    return substeps.allSatisfy { canActInPathAfterAuthorization($0, evidence: evidence) }
+                }
+                return canActInPathAfterAuthorization(branch, evidence: evidence)
+            }
+        }
         guard let kind = ActionKind(step), kind != .path else { return false }
         let target = step[kind.rawValue]
         switch kind {
@@ -1219,12 +1239,24 @@ final class Computer: @unchecked Sendable {
             fields["path"] = .array(try steps.map(resolvingLaunchNames))
             return .object(fields)
         }
+        if let branches = fields["choose"]?.array {
+            fields["choose"] = .array(try branches.map { branch in
+                guard case .object(var obj) = branch else { return branch }
+                if let substeps = obj["steps"]?.array {
+                    obj["steps"] = .array(try substeps.map(resolvingLaunchNames))
+                    return .object(obj)
+                }
+                return try resolvingLaunchNames(branch)
+            })
+            return .object(fields)
+        }
         return action
     }
 
     func actNow(actions: [JSON], full: Bool, finish: Bool = false, session: String? = nil, answerBy: Double? = nil, byOwnersVoice: Bool = false, local: Bool = false, localTask: String? = nil, onActionSucceeded: PokiCore.ActionSucceeded?) async -> ToolResult {
         scrollFound = nil
         scrollObservation = nil
+        pathObservation = nil
         typedInto = nil
         // The approval event carries the source that raised it. Grant matching
         // remains the upstream workspace/action policy until unified Core #609.
@@ -1432,11 +1464,13 @@ final class Computer: @unchecked Sendable {
         }
         let launched = toRun.compactMap { $0["launch"].flatMap { $0.string ?? $0["bundle"]?.string } }.last
         var screenObservation: FreshScreenObservation?
-        if error == nil, tapRead == nil, config.quickRead(), selectedPane == nil, !finish {
-            if moreKind == ActionKind.scrollTo.rawValue, let scroll = scrollObservation {
+        if tapRead == nil, config.quickRead(), selectedPane == nil, !finish {
+            if error == nil, moreKind == ActionKind.scrollTo.rawValue, let scroll = scrollObservation {
                 screenObservation = await readAfterScroll(scroll, generation: generation, beforePicture: beforePicture, until: until)
-            } else if moreKind == ActionKind.launch.rawValue, let launched {
+            } else if error == nil, moreKind == ActionKind.launch.rawValue, let launched {
                 screenObservation = await readAfterLaunch(bundleID: launched, beforeApp: before?.bundleID, beforePicture: beforePicture, generation: generation, started: readStarted, until: until)
+            } else if let pathObs = pathObservation {
+                screenObservation = await readAfterPath(pathObs, beforePicture: beforePicture, until: until)
             }
             if let screenObservation, screenObservation.omitStalePicture {
                 lastPNG = nil
@@ -2309,10 +2343,63 @@ final class Computer: @unchecked Sendable {
         let remaining = until - now()
         guard remaining > 0, !Task.isCancelled else { return false }
         let region = target.pictureRegion
-        guard let text = try? await withDeadline(min(0.25, remaining), "confirming the display in the screenshot", {
+        guard let text = try? await withDeadline(min(0.4, remaining), "confirming the display in the screenshot", {
             TextRecognizer.recognize(png: png, in: region)
         }), text.count == 1, let digit = text.first else { return false }
-        return digit.text == target.expected && region.contains(digit.box.centre)
+        return digit.text.trimmingCharacters(in: .whitespacesAndNewlines) == target.expected && region.contains(digit.box.centre)
+    }
+
+    private func readAfterPath(_ obs: PathReadObservation, beforePicture: PictureSketch?, until: Double) async -> FreshScreenObservation? {
+        guard obs.foreground.pokiPane == nil, !config.isPoki(obs.foreground), now() - obs.treeAt < 1.5 else {
+            return nil
+        }
+        var result = FreshScreenObservation(kind: "path", inputAt: obs.inputAt, targetAt: obs.treeAt, reusedTree: true)
+        if let png = obs.png {
+            result.firstPictureAt = obs.pictureAt
+            result.reading = Reading(elements: obs.elements, foreground: obs.foreground, png: png,
+                                     screenshotCompanion: nil, firstPictureStartedAt: obs.pictureStartedAt,
+                                     firstPictureAt: obs.pictureAt, treeAt: obs.treeAt, notes: [],
+                                     ms: Int(((now() - obs.inputAt) * 1000).rounded()))
+            result.confirmed = true
+            result.reason = "path tree and picture reused"
+            return result
+        }
+        let deadline = min(now() + Self.settleWindow, until - config.readTimeout - 0.3)
+        let budget = min(config.readTimeout, max(0.4, deadline - now()))
+        guard budget > 0.3 else { return nil }
+        guard let capture = try? await runner.captureScreen(timeout: budget), capture.companion == nil else {
+            return nil
+        }
+        result.firstPictureAt = capture.finishedAt
+        let screen = size ?? ScreenSize(width: 10_000, height: 10_000)
+        let treeSig = listable(obs.elements, screen).map { "\($0.key)\($0.stateMark)@\($0.frame.described)" }.joined(separator: "\n")
+        let requiresPictureChange = obs.hadInput && beforePicture != nil && beforePicture?.hash == nil && lastTree != nil && treeSig != lastTree
+        if requiresPictureChange, let before = beforePicture, !PictureSketch(png: capture.data).differs(from: before) {
+            if let retry = try? await runner.captureScreen(timeout: min(1.0, max(0.3, deadline - now()))),
+               retry.companion == nil, PictureSketch(png: retry.data).differs(from: before) {
+                result.reading = Reading(elements: obs.elements, foreground: obs.foreground, png: retry.data,
+                                         screenshotCompanion: nil, firstPictureStartedAt: retry.startedAt,
+                                         firstPictureAt: retry.finishedAt, treeAt: obs.treeAt, notes: [],
+                                         ms: Int(((now() - obs.inputAt) * 1000).rounded()))
+                result.confirmed = true
+                result.reason = "path tree reused after picture retry"
+                return result
+            }
+            result.reading = Reading(elements: obs.elements, foreground: obs.foreground, png: nil,
+                                     screenshotCompanion: nil, firstPictureStartedAt: nil,
+                                     firstPictureAt: nil, treeAt: obs.treeAt, notes: [],
+                                     ms: Int(((now() - obs.inputAt) * 1000).rounded()))
+            result.omitStalePicture = true
+            result.reason = "stale pre-action picture rejected"
+            return result
+        }
+        result.reading = Reading(elements: obs.elements, foreground: obs.foreground, png: capture.data,
+                                 screenshotCompanion: nil, firstPictureStartedAt: capture.startedAt,
+                                 firstPictureAt: capture.finishedAt, treeAt: obs.treeAt, notes: [],
+                                 ms: Int(((now() - obs.inputAt) * 1000).rounded()))
+        result.confirmed = true
+        result.reason = "path tree reused"
+        return result
     }
 
     private struct PreparedCapture: Sendable {
@@ -3088,7 +3175,18 @@ final class Computer: @unchecked Sendable {
         case .path:
             // A path sends its own taps and keys, each held by these rules on the screen it lands on:
             // in a guarded app, in front or launched by the path, running it is input there.
-            let launched = (spec["steps"]?.array ?? spec.array ?? []).compactMap { $0["launch"].flatMap { $0.string ?? $0["bundle"]?.string } }
+            func pathLaunches(_ steps: [JSON]) -> [String] {
+                steps.flatMap { step -> [String] in
+                    if let branches = step["choose"]?.array {
+                        return branches.flatMap { branch -> [String] in
+                            if let sub = branch["steps"]?.array { return pathLaunches(sub) }
+                            return branch["launch"].flatMap { $0.string ?? $0["bundle"]?.string }.map { [$0] } ?? []
+                        }
+                    }
+                    return step["launch"].flatMap { $0.string ?? $0["bundle"]?.string }.map { [$0] } ?? []
+                }
+            }
+            let launched = pathLaunches(spec["steps"]?.array ?? spec.array ?? [])
             for bundle in [scan.front?.bundleID].compactMap({ $0 }) + launched where rules.guardedApps.contains(bundle) {
                 return "input in \(bundle == scan.front?.bundleID ? scan.front?.describe ?? bundle : bundle) (a path)"
             }
