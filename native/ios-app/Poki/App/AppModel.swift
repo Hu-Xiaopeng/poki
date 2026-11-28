@@ -436,11 +436,11 @@ final class AppModel {
                 guard let self else { return false }
                 let allowed = await self.canAutoUnlock
                 if !allowed {
-                    AppLog.shared.add("auto-unlock", "skipped: canAutoUnlock is false")
+                    await AppLog.shared.add("auto-unlock", "skipped: canAutoUnlock is false")
                     return false
                 }
                 let unlocked = await self.unlockForLocalTask(timeout: timeout)
-                AppLog.shared.add("auto-unlock", unlocked ? "handler unlocked the phone" : "handler could not unlock")
+                await AppLog.shared.add("auto-unlock", unlocked ? "handler unlocked the phone" : "handler could not unlock")
                 return unlocked
             }
         }
