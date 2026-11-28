@@ -429,10 +429,19 @@ final class AppModel {
         host.onConsent { [weak self] client, callback, connector in
             await self?.askToConnect(client: client, callback: callback, connector: connector) ?? false
         }
-        if transport == nil, supportsAutoUnlock {
+        // Local build: register the unlock handler for every transport, not only
+        // the in-process one, so a relay-driven task can wake a locked phone too.
+        if supportsAutoUnlock {
             host.onAutoUnlock { [weak self] timeout in
-                guard let self, await self.canAutoUnlock else { return false }
-                return await self.unlockForLocalTask(timeout: timeout)
+                guard let self else { return false }
+                let allowed = await self.canAutoUnlock
+                if !allowed {
+                    AppLog.shared.add("auto-unlock", "skipped: canAutoUnlock is false")
+                    return false
+                }
+                let unlocked = await self.unlockForLocalTask(timeout: timeout)
+                AppLog.shared.add("auto-unlock", unlocked ? "handler unlocked the phone" : "handler could not unlock")
+                return unlocked
             }
         }
         let computers = LocalComputers(host: host) { [weak self] computer in
@@ -557,8 +566,10 @@ final class AppModel {
     }
 
     private var canAutoUnlock: Bool {
-        sessionOn && !ownerPaused && ChatModel.delegatedBusy == nil &&
-            (automationPath == .runner || inProcessSession == .open)
+        // Local build: an outside agent's task may arrive while Poki's own chat
+        // session is off; the automation path is what decides whether input works.
+        !ownerPaused && ChatModel.delegatedBusy == nil &&
+            (sessionOn || automationPath == .runner || inProcessSession == .open)
     }
 
     private func unlockForLocalTask(timeout: Double) async -> Bool {
